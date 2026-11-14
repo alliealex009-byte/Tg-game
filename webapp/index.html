@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1b1b1d">
+<title>Game Hub</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+</head>
+<body>
+<div id="app">
+  <section id="screen-loading" class="screen active"><div class="center"><div class="spinner"></div><p id="loading-msg">Loading…</p></div></section>
+  <section id="screen-home" class="screen"></section>
+  <section id="screen-lobby" class="screen"></section>
+  <section id="screen-game" class="screen"></section>
+</div>
+
+<div id="conn" class="conn hidden">Reconnecting…</div>
+<div id="toast" class="toast hidden"></div>
+
+<div id="chat" class="chat hidden">
+  <div class="chat-head"><b>Chat</b><button id="chat-close" class="ibtn sm">✕</button></div>
+  <div id="chat-list" class="chat-list"></div>
+  <div class="chat-quick" id="chat-quick"></div>
+  <form id="chat-form" class="chat-form"><input id="chat-input" maxlength="80" placeholder="Say something…" autocomplete="off"><button class="btn sm">Send</button></form>
+</div>
+
+<div id="result" class="overlay hidden"></div>
+
+<script src="board.js"></script>
+<script src="games.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
