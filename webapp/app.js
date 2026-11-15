@@ -68,28 +68,108 @@
   }
 
   /* ---------------- sound ---------------- */
-  let actx;
-  function beep(freq, dur, type, vol, when) {
+  let actx, master, noiseBuf;
+  function audio() {
+    if (!actx) {
+      try {
+        actx = new (window.AudioContext || window.webkitAudioContext)();
+        master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination);
+        noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+        const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      } catch (e) { actx = null; }
+    }
+    if (actx && actx.state === "suspended") { try { actx.resume(); } catch (e) { /* ignore */ } }
+    return actx;
+  }
+  function unlockAudio() {
+    const c = audio(); if (!c) return;
+    try { const o = c.createOscillator(), g = c.createGain(); g.gain.value = 0.0001; o.connect(g); g.connect(c.destination); o.start(); o.stop(c.currentTime + 0.01); } catch (e) { /* ignore */ }
+  }
+  ["pointerdown", "touchend", "click", "keydown"].forEach((ev) => document.addEventListener(ev, unlockAudio, { passive: true }));
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) audio(); });
+  function tone(freq, dur, type, vol, when, slideTo) {
     if (!S.sound) return;
+    const c = audio(); if (!c) return;
     try {
-      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-      const o = actx.createOscillator(), g = actx.createGain();
-      o.type = type || "sine"; o.frequency.value = freq;
-      o.connect(g); g.connect(actx.destination);
-      const t = actx.currentTime + (when || 0), v = vol || 0.05;
-      g.gain.setValueAtTime(v, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + (dur || 0.08));
-      o.start(t); o.stop(t + (dur || 0.08) + 0.02);
+      const o = c.createOscillator(), g = c.createGain(), t = c.currentTime + (when || 0), v = vol || 0.2;
+      o.type = type || "sine"; o.frequency.setValueAtTime(freq, t);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(v, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.03);
     } catch (e) { /* audio blocked */ }
   }
+  function noise(dur, vol, when, freq) {
+    if (!S.sound) return;
+    const c = audio(); if (!c || !noiseBuf) return;
+    try {
+      const src = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain(), t = c.currentTime + (when || 0);
+      src.buffer = noiseBuf; f.type = "bandpass"; f.frequency.value = freq || 1800; f.Q.value = 0.9;
+      g.gain.setValueAtTime(vol || 0.2, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      src.connect(f); f.connect(g); g.connect(master); src.start(t); src.stop(t + dur + 0.02);
+    } catch (e) { /* ignore */ }
+  }
   const sfx = {
-    roll() { [300, 380, 460, 540].forEach((f, i) => beep(f, 0.05, "square", 0.03, i * 0.07)); },
-    step() { beep(520, 0.04, "triangle", 0.05); },
-    capture() { beep(190, 0.25, "sawtooth", 0.06); },
-    win() { [523, 659, 784, 1046].forEach((f, i) => beep(f, 0.2, "triangle", 0.07, i * 0.14)); },
-    pop() { beep(660, 0.07, "sine", 0.05); },
-    turn() { beep(880, 0.1, "sine", 0.05); },
+    roll() { for (let i = 0; i < 7; i++) { noise(0.05, 0.35, i * 0.07, 1400 + Math.random() * 1800); tone(180 + Math.random() * 120, 0.04, "square", 0.05, i * 0.07); } tone(240, 0.12, "triangle", 0.22, 0.52); },
+    step() { tone(520, 0.07, "triangle", 0.2); },
+    capture() { tone(260, 0.3, "sawtooth", 0.22, 0, 70); noise(0.18, 0.3, 0, 600); },
+    win() { [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.28, "triangle", 0.25, i * 0.12)); tone(1046, 0.6, "sine", 0.18, 0.62); },
+    lose() { [392, 330, 262].forEach((f, i) => tone(f, 0.3, "sine", 0.22, i * 0.18)); },
+    draw() { tone(440, 0.2, "sine", 0.2); tone(440, 0.25, "sine", 0.2, 0.22); },
+    pop() { tone(700, 0.09, "sine", 0.22, 0, 1000); },
+    place() { tone(180, 0.1, "sine", 0.35, 0, 90); noise(0.04, 0.2, 0, 2500); },
+    drop() { tone(420, 0.25, "sine", 0.2, 0, 160); tone(120, 0.12, "sine", 0.3, 0.22); },
+    flip() { noise(0.07, 0.25, 0, 3500); tone(900, 0.05, "triangle", 0.1); },
+    deal() { noise(0.09, 0.3, 0, 4200); tone(300, 0.04, "triangle", 0.08); },
+    chip() { tone(1500, 0.05, "square", 0.08); tone(2000, 0.07, "square", 0.06, 0.04); },
+    hit() { tone(140, 0.18, "sine", 0.35, 0, 60); noise(0.1, 0.35, 0, 900); },
+    miss() { noise(0.25, 0.25, 0, 500); tone(300, 0.25, "sine", 0.1, 0, 180); },
+    good() { tone(660, 0.1, "triangle", 0.22); tone(880, 0.16, "triangle", 0.22, 0.09); },
+    bad() { tone(200, 0.22, "sawtooth", 0.18, 0, 120); },
+    turn() { tone(880, 0.12, "sine", 0.2); tone(1175, 0.14, "sine", 0.18, 0.1); },
+    tick() { tone(1000, 0.03, "square", 0.08); },
+    night() { tone(220, 0.6, "sine", 0.22, 0, 110); tone(330, 0.6, "sine", 0.12, 0.05, 165); },
+    day() { tone(523, 0.2, "triangle", 0.2); tone(659, 0.2, "triangle", 0.2, 0.15); tone(784, 0.3, "triangle", 0.2, 0.3); },
+    vote() { tone(500, 0.06, "square", 0.12); tone(750, 0.1, "square", 0.12, 0.07); },
+    cash() { [1318, 1568, 2093].forEach((f, i) => tone(f, 0.12, "triangle", 0.15, i * 0.06)); },
   };
+
+  /* dice tumble: cycles random faces with a spin, then settles on the real value */
+  async function tumble(el, value, ms) {
+    if (!el) return;
+    ms = ms || 650;
+    sfx.roll();
+    el.classList.add("rolling");
+    const t0 = performance.now();
+    let last = 0;
+    while (performance.now() - t0 < ms) {
+      const f = 1 + Math.floor(Math.random() * 6);
+      el.innerHTML = diceHTML(f === last ? (f % 6) + 1 : f); last = f;
+      await sleep(70);
+    }
+    el.innerHTML = diceHTML(value);
+    el.classList.remove("rolling");
+    el.classList.add("settle");
+    setTimeout(() => el.classList.remove("settle"), 300);
+  }
+
+  /* confetti burst */
+  function confetti(n) {
+    const box = document.createElement("div"); box.className = "confetti";
+    const cols = ["#ff5a5a", "#ffd24a", "#4ade80", "#4aa8ff", "#c084fc", "#fff"];
+    for (let i = 0; i < (n || 70); i++) {
+      const c = document.createElement("i");
+      c.style.left = Math.random() * 100 + "%";
+      c.style.background = cols[i % cols.length];
+      c.style.animationDelay = Math.random() * 0.6 + "s";
+      c.style.animationDuration = 1.8 + Math.random() * 1.4 + "s";
+      c.style.setProperty("--dx", (Math.random() * 120 - 60) + "px");
+      c.style.transform = "rotate(" + Math.random() * 360 + "deg)";
+      box.appendChild(c);
+    }
+    document.body.appendChild(box);
+    setTimeout(() => box.remove(), 4000);
+  }
 
   /* ---------------- socket ---------------- */
   function send(obj) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj)); }
@@ -334,6 +414,8 @@
     const frac = Math.max(0, ui.deadline - performance.now()) / (ui.turnSeconds * 1000);
     const ring = ui.rings[s.game.turn];
     if (ring) ring.style.setProperty("--p", frac * 360 + "deg");
+    const left = Math.ceil(frac * ui.turnSeconds);
+    if (s.game.turn === s.you && left <= 5 && left > 0 && ui.lastTick !== left) { ui.lastTick = left; sfx.tick(); haptic(); }
   }
 
   /* ---------------- Ludo ---------------- */
@@ -497,9 +579,11 @@
       if (g.last_roll && g.last_roll.seq > ui.lastRollSeq) {
         ui.lastRollSeq = g.last_roll.seq;
         ui.dice[g.last_roll.uid] = g.last_roll.value;
-        renderTokens(); updateLudoPanels(s, g.last_roll.uid);
-        sfx.roll();
-        await sleep(550);
+        renderTokens(); updateLudoPanels(s);
+        const seat = (g.players.find((p) => p.uid === g.last_roll.uid) || {}).seat;
+        const dbx = ui.panelEls[seat] && ui.panelEls[seat].querySelector(".dicebox");
+        await tumble(dbx, g.last_roll.value, 650);
+        await sleep(120);
       }
       if (g.last_move && g.last_move.seq > ui.lastMoveSeq) {
         ui.lastMoveSeq = g.last_move.seq;
@@ -556,9 +640,11 @@
     $("#tb").querySelectorAll(".tcell").forEach((c, i) => {
       const v = g.board[i];
       c.textContent = v;
-      c.className = "tcell" + (v ? " " + v : "") + (!v && myTurn ? " can" : "") + (g.line && g.line.includes(i) ? " win" : "");
+      const fresh = v && c.dataset.v !== v;
+      c.dataset.v = v || "";
+      c.className = "tcell" + (v ? " " + v : "") + (fresh && !ui.first ? " new" : "") + (!v && myTurn ? " can" : "") + (g.line && g.line.includes(i) ? " win" : "");
     });
-    if (!ui.first && g.last_move && g.last_move.seq > ui.lastMoveSeq) { sfx.pop(); }
+    if (!ui.first && g.last_move && g.last_move.seq > ui.lastMoveSeq) { sfx.place(); haptic(); }
     ui.first = false;
     if (g.last_move) ui.lastMoveSeq = g.last_move.seq;
     if (myTurn && ui.prevTurn !== s.you) { sfx.turn(); haptic(); }
@@ -574,13 +660,16 @@
     s.players.forEach((p) => { byUid[p.uid] = p; });
     const played = s.players.some((p) => p.uid === s.you && !p.left);
     let title, sub = "", amt = "";
-    if (r.draw) { title = "🤝 Draw"; sub = s.bet ? "Bets refunded" : ""; }
+    if (r.draw) { title = "🤝 Draw"; sub = s.bet ? "Bets refunded" : ""; sfx.draw(); }
     else if (r.winner === s.you) {
       title = "🏆 You won!";
       if (s.bet) amt = `<div class="amt win">+${r.prize} coins</div>`;
       sub = s.bet && r.rake ? "House fee: " + r.rake : "";
-      sfx.win();
+      sfx.win(); confetti();
+    } else if (r.winners && r.winners.includes(s.you)) {
+      title = "🏆 You won!"; if (s.bet) amt = `<div class="amt win">+${r.share} coins</div>`; sfx.win(); confetti();
     } else {
+      if (played) sfx.lose();
       const w = byUid[r.winner];
       title = w ? esc(w.name) + " won" : "Game over";
       if (played && s.bet) amt = `<div class="amt lose">-${s.bet} coins</div>`;
@@ -639,7 +728,7 @@
     const sp = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || params.get("room") || params.get("startapp") || "";
     if (/^[0-9a-fA-F]{8}$/.test(sp)) joinRoom(sp.toUpperCase()); else showHome();
   }
-  Object.assign(window.HUB, { S, send, esc, sleep, sfx, haptic, avatarInner, handle, topbarHTML, diceHTML, toast });
+  Object.assign(window.HUB, { S, send, esc, sleep, sfx, haptic, avatarInner, handle, topbarHTML, diceHTML, toast, tumble, confetti, tone, noise });
   window.HUB.UI.ludo = { build: buildLudo, apply: applyLudo };
   window.HUB.UI.tictactoe = { build: buildTTT, apply: applyTTT };
   boot();

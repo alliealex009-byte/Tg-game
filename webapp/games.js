@@ -170,9 +170,9 @@
       if (g.last_roll && g.last_roll.seq > ui.lastRollSeq) {
         ui.lastRollSeq = g.last_roll.seq; ui.dice = g.last_roll.value;
         ui.note = (g.last_roll.uid === s.you ? "You" : nameOf(s, g.last_roll.uid)) + " rolled " + g.last_roll.value;
-        showSlDice(ui, s); HUB.sfx.roll();
-        const dbx = $("#sldice"); if (dbx) { dbx.classList.remove("rolling"); void dbx.offsetWidth; dbx.classList.add("rolling"); }
-        await HUB.sleep(520);
+        showSlDice(ui, s);
+        await HUB.tumble($("#sldice"), g.last_roll.value, 650);
+        await HUB.sleep(100);
       }
       if (g.last_move && g.last_move.seq > ui.lastMoveSeq) { ui.lastMoveSeq = g.last_move.seq; await slMove(ui, s, g.last_move); }
       g.players.forEach((p) => { ui.pos[p.uid] = p.pos; });
@@ -227,7 +227,7 @@
     $("#c4").classList.toggle("can", mine);
     updateBar(ui, s, (uid) => ({ score: uid === g.players[0].uid ? "🔴" : "🟡" }));
     setHint(turnHint(s));
-    if (fresh) { HUB.sfx.pop(); await HUB.sleep(450); }
+    if (fresh) { HUB.sfx.drop(); await HUB.sleep(450); }
     turnFx(ui, s);
   }
 
@@ -307,7 +307,7 @@
     });
     const mine = s.status === "playing" && g.turn === s.you;
     $("#mg").classList.toggle("can", mine);
-    if (!ui.first && g.last_flip && g.last_flip.seq > ui.lastSeq) HUB.sfx.pop();
+    if (!ui.first && g.last_flip && g.last_flip.seq > ui.lastSeq) HUB.sfx.flip();
     ui.first = false;
     if (g.last_flip) ui.lastSeq = g.last_flip.seq;
     updateBar(ui, s, (uid) => { const p = g.players.find((x) => x.uid === uid); return { score: p.score + " 🃏" }; });
@@ -414,7 +414,7 @@
       if (a.len > 24 && canShoot()) {
         ui.pending = true;
         HUB.send({ t: "shoot", x: ui.sx, angle: a.angle, power: Math.max(0.08, a.power) });
-        HUB.sfx.roll(); HUB.haptic("heavy");
+        HUB.sfx.hit(); HUB.haptic("heavy");
       }
       setHint(turnHint(HUB.S.room));
       redraw();
@@ -441,7 +441,7 @@
         const A = frames[f], B = frames[Math.min(f + 1, n - 1)], items = [];
         for (let b = 0; b <= ids.length; b++) {
           const hf = hideAt[b];
-          if (hf !== undefined && f >= hf) { if (!played.has(b)) { played.add(b); HUB.sfx.pop(); } continue; }
+          if (hf !== undefined && f >= hf) { if (!played.has(b)) { played.add(b); HUB.sfx.hit(); } continue; }
           const x = A[2 * b] + (B[2 * b] - A[2 * b]) * fr, y = A[2 * b + 1] + (B[2 * b + 1] - A[2 * b + 1]) * fr;
           items.push(b === 0 ? { striker: true, x, y } : { kind: kindOf[ids[b - 1]], x, y });
         }
