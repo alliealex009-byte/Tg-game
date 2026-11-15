@@ -33,8 +33,8 @@ from .verify import Verifier
 log = logging.getLogger("bot")
 
 PLAY_CMDS = {info["cmd"]: key for key, info in GAME_INFO.items()}  # e.g. {"playludo": "ludo", ...}
-CATS = ["Board", "Cards", "Party", "Casino", "Brain", "Action", "Quick", "Classic"]
-CAT_EMOJI = {"Board": "♟", "Cards": "🃏", "Party": "🎭", "Casino": "🎰", "Brain": "🧠", "Action": "🥊", "Quick": "⚡", "Classic": "🎲"}
+CATS = ["Board", "Cards", "Party", "Casino", "Brain", "Classic"]
+CAT_EMOJI = {"Board": "♟", "Cards": "🃏", "Party": "🎭", "Casino": "🎰", "Brain": "🧠", "Classic": "🎲"}
 BANNER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "banner.png")
 
 
@@ -211,11 +211,10 @@ def build(settings, db, rooms):
             )
         if arg.startswith("ref_") and arg[4:].isdigit():
             ref = int(arg[4:])
-            earned = db.set_referrer(m.from_user.id, ref, settings.referral_bonus)
-            if earned:
+            if db.set_referrer(m.from_user.id, ref, settings.referral_bonus):
                 u = db.get_user(m.from_user.id)
                 try:
-                    await bot.send_message(ref, f"🎉 <b>{esc(u['name'])}</b> joined with your link! You earned <b>+{earned}</b> coins.")
+                    await bot.send_message(ref, f"🎉 <b>{esc(u['name'])}</b> joined with your link! You earned <b>+{db.last_referral}</b> coins.")
                 except Exception:
                     pass
         if m.chat.type != ChatType.PRIVATE:
@@ -323,8 +322,8 @@ def build(settings, db, rooms):
         link = f"https://t.me/{ctx['username']}?start=ref_{uid}"
         u = db.get_user(uid)
         return (
-            f"👥 <b>Invite &amp; Earn</b>\n\nYou earn <b>300 → {settings.referral_bonus}</b> coins per friend (it grows with every friend you bring), "
-            f"and each friend gets half as a welcome gift.\n\n🔗 Your link:\n<code>{link}</code>\n\nFriends invited: <b>{u['refs']}</b>"
+            f"👥 <b>Invite &amp; Earn</b>\n\nYou get <b>{settings.referral_bonus}</b> coins for your first friend, rising by 50 with every friend up to <b>700</b> per friend "
+            f"(your friend gets +{settings.referral_bonus // 2}).\n\n🔗 Your link:\n<code>{link}</code>\n\nFriends invited: <b>{u['refs']}</b>"
         )
 
     @r.callback_query(F.data == "m:invite")
@@ -549,7 +548,7 @@ def build(settings, db, rooms):
         if act == "stats":
             return await show(cb, stats_text(), back)
         if act == "chats":
-            rows = db.chat_list(30)
+            rows = db.c.execute("SELECT title,type FROM chats WHERE active=1 ORDER BY added DESC LIMIT 30").fetchall()
             body = "\n".join(f"• {esc(x['title'] or '?')} <i>({x['type']})</i>" for x in rows) or "None yet. Add me to a group!"
             return await show(cb, f"💬 <b>Groups</b>\n\n{body}", back)
         if act == "vf":

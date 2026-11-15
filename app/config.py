@@ -31,9 +31,7 @@ class Settings:
     owner_name: str = "AAKASH"
     owner_username: str = "Advik_prakashh"
     sister_bot: str = "Groupingabot"
-    referral_bonus: int = 700     # cap per referral; rewards climb 300 -> 700 (see rewards.py)
-    mongo_uri: str = ""            # when set, MongoDB is used instead of the local SQLite file
-    mongo_db: str = "gamely"
+    referral_bonus: int = 300
     bot_delay: tuple = (0.9, 1.6)  # seconds a computer player "thinks"
     dev_mode: bool = False        # allows browser testing without Telegram. NEVER enable in production.
 
@@ -53,9 +51,7 @@ def load_settings() -> Settings:
         owner_name=e("OWNER_NAME", "AAKASH").strip(),
         owner_username=e("OWNER_USERNAME", "Advik_prakashh").strip().lstrip("@"),
         sister_bot=e("SISTER_BOT", "Groupingabot").strip().lstrip("@"),
-        referral_bonus=int(e("REFERRAL_BONUS", "700")),
-        mongo_uri=e("MONGO_URI", "").strip(),
-        mongo_db=e("MONGO_DB", "gamely").strip() or "gamely",
+        referral_bonus=int(e("REFERRAL_BONUS", "300")),
         bot_delay=(float(e("BOT_DELAY_MIN", "0.9")), float(e("BOT_DELAY_MAX", "1.6"))),
         dev_mode=_bool(e("DEV_MODE", "0")),
     )

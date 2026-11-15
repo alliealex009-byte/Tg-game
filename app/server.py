@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .auth import AuthError, user_from_init_data
 from .config import load_settings
-from .store import make_db
+from .db import DB
 from .games import GAME_INFO, GAMES
 from .games.base import GameError
 from .rooms import RoomManager
@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("server")
 
 settings = load_settings()
-db = make_db(settings)
+db = DB(settings.db_path, settings.starting_coins, settings.daily_bonus)
 rooms = RoomManager(db, settings)
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "webapp")
 BETS = [0, 50, 100, 500, 1000]
@@ -35,7 +35,7 @@ BETS = [0, 50, 100, 500, 1000]
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.bot_username = ""
-    tasks = [asyncio.create_task(rooms.janitor()), asyncio.create_task(rooms.host_loop())]
+    tasks = [asyncio.create_task(rooms.janitor())]
     bot = None
     if settings.bot_token:
         try:
@@ -152,9 +152,8 @@ async def ws_endpoint(ws: WebSocket):
         while True:
             raw = await ws.receive_text()
             now = time.monotonic()
-            weight = 0.3 if raw.startswith('{"t":"tap"') or raw.startswith('{"t": "tap"') else 1.0
-            window = [x for x in window if now - x[0] < 5] + [(now, weight)]
-            if sum(w for _, w in window) > 40:
+            window = [x for x in window if now - x < 5] + [now]
+            if len(window) > 40:
                 await ws.send_json({"t": "error", "fatal": True, "msg": "Too many requests"})
                 break
             if len(raw) > 2000:

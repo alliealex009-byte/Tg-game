@@ -20,8 +20,6 @@ BOT_NAMES = ["Bot Ravi", "Bot Mia", "Bot Zed", "Bot Luna", "Bot Kai", "Bot Nova"
 KICK_AFTER = 4   # consecutive turn timeouts before a human is removed from a running game
 AFK_AFTER = 2    # timeouts before a player is flagged AFK (their turns then play out quickly)
 CHAT_KEEP = 40
-HOST_GRACE = 70  # seconds the host may be offline before the room passes to another player
-REACTIONS = {"❤️", "😂", "🔥", "👏", "😮", "😎", "🎉", "😡", "👍", "💀"}
 
 
 class Player:
@@ -44,6 +42,7 @@ class Room:
         self.code, self.game_type, self.creator_id, self.bet = code, game_type, creator_id, bet
         self.min_players, self.max_players = info["min"], info["max"]
         self.turn_seconds = turn_seconds
+        self.phase_id = None
         self.players: list[Player] = []
         self.status = "lobby"  # lobby | playing | finished
         self.game = None
@@ -57,10 +56,6 @@ class Room:
         self.timer_token = 0
         self.chat: list[dict] = []
         self.last_chat: dict[int, float] = {}
-        self.last_react: dict[int, float] = {}
-        self.names: dict[int, str] = {}          # everyone who ever connected (players and spectators)
-        self.host = creator_id
-        self.host_off_since = None
         self.touched = time.time()
 
     def player(self, uid):
@@ -70,34 +65,24 @@ class Room:
         return [p for p in self.players if not p.is_bot]
 
     def host_id(self):
-        p = self.player(self.host)
-        if p is not None and not p.is_bot and self.host not in self.left:
-            return self.host
-        h = [x for x in self.humans() if x.uid not in self.left]
+        if self.player(self.creator_id):
+            return self.creator_id
+        h = self.humans()
         return h[0].uid if h else None
-
-    def watcher_ids(self):
-        """Connected people who are not seated players: they can watch and chat, but not act."""
-        return [u for u, c in self.conns.items() if c and not (self.player(u) is not None and u not in self.left)]
 
     def snapshot(self, you):
         tl = None
         if self.status == "playing" and self.deadline is not None:
             tl = max(0.0, self.deadline - time.monotonic())
         info = GAME_INFO[self.game_type]
-        watchers = self.watcher_ids()
-        me = self.player(you)
         return {
             "t": "state", "v": self.version, "you": you, "code": self.code,
-            "watching": len(watchers), "watchers": [self.names.get(u, "Viewer") for u in watchers[:8]],
-            "spectator": me is None or you in self.left, "nobots": bool(info.get("nobots")),
-            "ambient": bool(info.get("ambient")), "tag": info.get("tag", ""),
             "game_type": self.game_type, "title": info["title"], "emoji": info["emoji"],
             "status": self.status, "bet": self.bet, "host": self.host_id(),
             "min_players": self.min_players, "max_players": self.max_players,
             "players": [p.public(bool(self.conns.get(p.uid)), p.uid in self.left) for p in self.players],
             "game": self.game.view(you) if self.game else None,
-            "time_left": tl, "turn_seconds": self.turn_seconds, "result": self.result,
+            "time_left": tl, "turn_seconds": (getattr(self.game, "phase_seconds", None) or self.turn_seconds), "result": self.result,
         }
 
 
@@ -144,7 +129,6 @@ class RoomManager:
     async def join(self, room: Room, user: dict, ws):
         uid = user["id"]
         room.touched = time.time()
-        room.names[uid] = user["name"]
         p = room.player(uid)
         if p is None and room.status == "lobby" and len(room.players) < room.max_players:
             if room.bet and user["coins"] < room.bet:
@@ -202,8 +186,6 @@ class RoomManager:
             await self.rematch(room, uid)
         elif t == "chat":
             await self.chat(room, uid, msg.get("text"))
-        elif t == "react":
-            await self.react(room, uid, msg.get("e"))
         elif isinstance(t, str):  # anything else is a game action; the engine validates it
             await self.action(room, uid, msg)
         else:
@@ -214,8 +196,6 @@ class RoomManager:
             raise GameError("The game already started")
         if uid != room.host_id():
             raise GameError("Only the host can add bots")
-        if GAME_INFO[room.game_type].get("nobots"):
-            raise GameError("This game is player-vs-player only")
         if room.bet:
             raise GameError("Bots can only join free games")
         if len(room.players) >= room.max_players:
@@ -281,9 +261,6 @@ class RoomManager:
             return
         if room.status == "lobby" or room.status == "finished":
             room.players.remove(p)
-            if room.host == uid:
-                nxt = next((x for x in room.humans() if x.uid not in room.left), None)
-                room.host = nxt.uid if nxt else room.host
             if room.status == "lobby" and not room.humans() and not room.conns:
                 self._destroy(room)
                 return
@@ -316,51 +293,6 @@ class RoomManager:
         entry = {"t": "chat", "uid": uid, "name": name, "text": text, "ts": int(now)}
         room.chat = (room.chat + [entry])[-CHAT_KEEP:]
         await self._broadcast_raw(room, entry)
-
-    async def react(self, room, uid, emoji):
-        if emoji not in REACTIONS:
-            return
-        now = time.time()
-        if now - room.last_react.get(uid, 0) < 0.35:
-            return
-        room.last_react[uid] = now
-        await self._broadcast_raw(room, {"t": "react", "uid": uid, "name": room.names.get(uid, "Player"), "e": emoji})
-
-    # ---------- host presence ----------
-    async def check_hosts(self, now=None):
-        """Call every few seconds. A host who stays offline for HOST_GRACE seconds hands the room to another player."""
-        now = time.monotonic() if now is None else now
-        for room in list(self.rooms.values()):
-            host = room.host_id()
-            if host is None:
-                continue
-            if room.conns.get(host):
-                room.host_off_since = None
-                room.host = host
-                continue
-            if room.host_off_since is None:
-                room.host_off_since = now
-                continue
-            if now - room.host_off_since < HOST_GRACE:
-                continue
-            cands = [p for p in room.humans() if p.uid != host and p.uid not in room.left and room.conns.get(p.uid)]
-            if not cands:
-                continue  # nobody online to hand the room to
-            new = cands[0]
-            room.host, room.host_off_since = new.uid, None
-            entry = {"t": "chat", "uid": 0, "name": "GAMELY", "sys": True, "ts": int(time.time()),
-                     "text": f"👑 Host was offline for {HOST_GRACE}s. {new.name} is the new host."}
-            room.chat = (room.chat + [entry])[-CHAT_KEEP:]
-            await self.broadcast(room)
-            await self._broadcast_raw(room, entry)
-
-    async def host_loop(self):
-        while True:
-            await asyncio.sleep(5)
-            try:
-                await self.check_hosts()
-            except Exception:
-                log.exception("host check failed")
 
     # ---------- game flow ----------
     async def _after(self, room):
@@ -436,7 +368,13 @@ class RoomManager:
         elif p.afk:
             delay, room.deadline = 1.0, None
         else:
-            delay = room.turn_seconds
+            delay = getattr(g, "phase_seconds", None) or room.turn_seconds
+            pid = getattr(g, "phase_id", None)  # simultaneous-action games: keep one deadline per phase
+            if pid is not None and getattr(room, "phase_id", None) == pid and room.deadline is not None:
+                delay = max(0.3, room.deadline - time.monotonic())
+            else:
+                room.deadline = time.monotonic() + delay
+            room.phase_id = pid
             room.deadline = time.monotonic() + delay
         room.timer_token += 1
         room.timer_task = asyncio.create_task(self._timer(room, delay, room.timer_token))
@@ -449,7 +387,7 @@ class RoomManager:
             room.timer_task = None  # we are the running task; don't let _schedule cancel us
             uid = room.game.current()
             p = room.player(uid)
-            if p is not None and not p.is_bot:
+            if p is not None and not p.is_bot and not getattr(room.game, "ticker", False):
                 p.afk_count += 1
                 p.afk = p.afk_count >= AFK_AFTER
                 if p.afk_count >= KICK_AFTER:
