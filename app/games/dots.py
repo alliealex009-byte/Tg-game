@@ -1,116 +1,122 @@
-"""Dots & Boxes on a 5x5 box grid. Completing a box scores and gives another turn."""
+"""Dots & Boxes on a 5x5 box grid (6x6 dots). Completing a box scores it and gives another move."""
 from __future__ import annotations
 
 import random
 
 from .base import BaseGame, GameError
 
-N = 5  # boxes per side; horizontal edges: (N+1)*N, vertical edges: N*(N+1)
-
-
-def h_edge(r, c):  # r in 0..N, c in 0..N-1
-    return r * N + c
-
-
-def v_edge(r, c):  # r in 0..N-1, c in 0..N
-    return (N + 1) * N + r * (N + 1) + c
-
-
-NE = 2 * N * (N + 1)
-
-
-def box_edges(r, c):
-    return [h_edge(r, c), h_edge(r + 1, c), v_edge(r, c), v_edge(r, c + 1)]
+N = 5
 
 
 class DotsGame(BaseGame):
     name = "dots"
-    min_players, max_players = 2, 4
+    min_players = 2
+    max_players = 2
 
     def __init__(self, players, rng=None):
-        if not 2 <= len(players) <= 4:
-            raise ValueError("Dots & Boxes needs 2-4 players")
+        if len(players) != 2:
+            raise ValueError("Dots & Boxes needs exactly 2 players")
         self.rng = rng or random.SystemRandom()
         self.players = list(players)
-        self.edges = [None] * NE
-        self.boxes = [None] * (N * N)
-        self.score = {u: 0 for u in self.players}
-        self.left = set()
+        self.h = [[0] * N for _ in range(N + 1)]        # horizontal edges: rows 0..N, cols 0..N-1
+        self.v = [[0] * (N + 1) for _ in range(N)]      # vertical edges: rows 0..N-1, cols 0..N
+        self.boxes = [[0] * N for _ in range(N)]
+        self.scores = {u: 0 for u in self.players}
         self.turn_idx = 0
-        self.seq, self.last_move = 0, None
-        self.winner, self.finished, self.draw = None, False, False
+        self.seq = 0
+        self.last_move = None
+        self.winner = None
+        self.finished = False
+        self.draw = False
 
     def current(self):
         return None if self.finished else self.players[self.turn_idx]
 
-    def _next(self):
-        for _ in range(len(self.players)):
-            self.turn_idx = (self.turn_idx + 1) % len(self.players)
-            if self.players[self.turn_idx] not in self.left:
-                return
+    def _sides(self, r, c):
+        return (self.h[r][c] != 0) + (self.h[r + 1][c] != 0) + (self.v[r][c] != 0) + (self.v[r][c + 1] != 0)
+
+    def free_edges(self):
+        out = []
+        for r in range(N + 1):
+            for c in range(N):
+                if not self.h[r][c]:
+                    out.append(("h", r, c))
+        for r in range(N):
+            for c in range(N + 1):
+                if not self.v[r][c]:
+                    out.append(("v", r, c))
+        return out
 
     def handle(self, uid, msg):
         if self.finished:
             raise GameError("The game is over")
         if uid != self.current():
             raise GameError("It's not your turn")
-        e = msg.get("edge")
-        if msg.get("t") != "edge" or isinstance(e, bool) or not isinstance(e, int) or not 0 <= e < NE:
+        if msg.get("t") != "line":
+            raise GameError("Unknown action")
+        d, r, c = msg.get("d"), msg.get("r"), msg.get("c")
+        if d not in ("h", "v") or any(isinstance(x, bool) or not isinstance(x, int) for x in (r, c)):
             raise GameError("Bad move")
-        if self.edges[e] is not None:
-            raise GameError("That line is already drawn")
-        self._draw(e)
+        rows, cols = (N + 1, N) if d == "h" else (N, N + 1)
+        if not (0 <= r < rows and 0 <= c < cols):
+            raise GameError("Bad move")
+        if (self.h if d == "h" else self.v)[r][c]:
+            raise GameError("That line is taken")
+        self._draw(d, r, c)
 
-    def _sides(self, b):
-        r, c = divmod(b, N)
-        return sum(self.edges[x] is not None for x in box_edges(r, c))
-
-    def _draw(self, e):
+    def _draw(self, d, r, c):
         uid = self.current()
-        self.edges[e] = uid
-        done = []
-        for b in range(N * N):
-            if self.boxes[b] is None and self._sides(b) == 4 and e in box_edges(*divmod(b, N)):
-                self.boxes[b] = uid
-                self.score[uid] += 1
-                done.append(b)
+        (self.h if d == "h" else self.v)[r][c] = uid
+        cand = [(r - 1, c), (r, c)] if d == "h" else [(r, c - 1), (r, c)]
+        got = []
+        for br, bc in cand:
+            if 0 <= br < N and 0 <= bc < N and not self.boxes[br][bc] and self._sides(br, bc) == 4:
+                self.boxes[br][bc] = uid
+                self.scores[uid] += 1
+                got.append([br, bc])
         self.seq += 1
-        self.last_move = {"seq": self.seq, "uid": uid, "edge": e, "boxes": done}
-        if all(x is not None for x in self.boxes):
+        self.last_move = {"uid": uid, "d": d, "r": r, "c": c, "boxes": got, "seq": self.seq}
+        if sum(self.scores.values()) == N * N:
+            a, b = self.players
             self.finished = True
-            best = max(self.score.values())
-            top = [u for u, s in self.score.items() if s == best]
-            if len(top) == 1:
-                self.winner = top[0]
+            if self.scores[a] != self.scores[b]:
+                self.winner = a if self.scores[a] > self.scores[b] else b
             else:
                 self.draw = True
             return
-        if not done:
-            self._next()
+        if not got:
+            self.turn_idx = 1 - self.turn_idx
 
     def auto_play(self):
         if self.finished:
             return
-        free = [i for i in range(NE) if self.edges[i] is None]
+        free = self.free_edges()
 
-        def cost(e):
-            owners = [b for b in range(N * N) if self.boxes[b] is None and e in box_edges(*divmod(b, N))]
-            if any(self._sides(b) == 3 for b in owners):
-                return -10
-            return sum(1 for b in owners if self._sides(b) == 2) * 5 + self.rng.random()
-        self._draw(min(free, key=cost))
+        def completes(e):
+            d, r, c = e
+            cand = [(r - 1, c), (r, c)] if d == "h" else [(r, c - 1), (r, c)]
+            return any(0 <= br < N and 0 <= bc < N and self._sides(br, bc) == 3 for br, bc in cand)
+
+        def gives(e):
+            d, r, c = e
+            cand = [(r - 1, c), (r, c)] if d == "h" else [(r, c - 1), (r, c)]
+            return any(0 <= br < N and 0 <= bc < N and self._sides(br, bc) == 2 for br, bc in cand)
+
+        grab = [e for e in free if completes(e)]
+        safe = [e for e in free if not gives(e)]
+        pick = self.rng.choice(grab or safe or free)
+        self._draw(*pick)
 
     def remove_player(self, uid):
-        if uid not in self.score or uid in self.left or self.finished:
+        if uid not in self.players or self.finished:
             return
-        self.left.add(uid)
-        act = [u for u in self.players if u not in self.left]
-        if len(act) <= 1:
-            self.finished, self.winner = True, act[0] if act else None
-        elif self.current() == uid:
-            self._next()
+        self.finished = True
+        self.winner = next(u for u in self.players if u != uid)
 
     def public_state(self):
-        return {"kind": "dots", "n": N, "players": [{"uid": u, "score": self.score[u], "left": u in self.left} for u in self.players],
-                "edges": self.edges, "boxes": self.boxes, "turn": self.current(), "last_move": self.last_move,
-                "winner": self.winner, "draw": self.draw}
+        return {
+            "kind": "dots", "n": N,
+            "players": [{"uid": u, "score": self.scores[u]} for u in self.players],
+            "turn": self.current(), "h": self.h, "v": self.v, "boxes": self.boxes,
+            "last_move": self.last_move, "winner": self.winner, "draw": self.draw,
+        }

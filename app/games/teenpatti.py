@@ -1,186 +1,251 @@
-"""Teen Patti (3-card Indian poker), 2-6 players. In-game chips; blind/seen play; chaal, raise, pack and show."""
+"""Teen Patti (Indian 3-card poker). 2-6 players, 1000 in-game chips each, up to 5 rounds.
+Boot ante, blind/seen play, chaal (optionally raising the stake), pack, show. Hands are hidden per viewer."""
 from __future__ import annotations
 
-import random
+from .base import GameError
+from .cards_common import RANKS, RVAL, CardGame, deck52, rank_of, suit_of
 
-from .base import BaseGame, GameError
+START_STACK = 1000
+BOOT = 20
+MAX_STAKE = BOOT * 4
+ROUNDS = 5
+MAX_ACTIONS = 36  # per round; after that the remaining players are forced to a showdown
+CAT_NAMES = {6: "Trail", 5: "Pure sequence", 4: "Sequence", 3: "Colour", 2: "Pair", 1: "High card"}
 
-SUITS = "SHDC"
-START_CHIPS, BOOT, MAX_STAKE, MAX_ACTIONS = 1000, 10, 160, 60
+
+def seq_top(vals):
+    """Top value of a 3-card run (A-K-Q=15 > A-2-3=14 > K-Q-J=13 ... 4-3-2=4) or None."""
+    v = sorted(vals)
+    if v == [2, 3, 14]:
+        return 14
+    if v[2] - v[1] == 1 and v[1] - v[0] == 1:
+        return 15 if v == [12, 13, 14] else v[2]
+    return None
 
 
-def rank(hand):
-    """Comparable tuple; higher wins. hand = three (value, suit) with A=14."""
-    vs = sorted((v for v, _ in hand), reverse=True)
-    flush = len({s for _, s in hand}) == 1
-    seq_hi = None
-    if vs[0] - vs[1] == 1 and vs[1] - vs[2] == 1:
-        seq_hi = vs[0]
-    elif vs == [14, 3, 2]:
-        seq_hi = 13.5  # A-2-3 is the second-highest sequence
-    if vs[0] == vs[1] == vs[2]:
-        return (6, vs[0])
-    if seq_hi and flush:
-        return (5, seq_hi)
-    if seq_hi:
-        return (4, seq_hi)
+def hand_rank(cards):
+    """Comparable tuple, bigger is better."""
+    vals = sorted((RVAL[rank_of(c)] for c in cards), reverse=True)
+    flush = len({suit_of(c) for c in cards}) == 1
+    top = seq_top(vals)
+    if vals[0] == vals[2]:
+        return (6, vals[0])
+    if top and flush:
+        return (5, top)
+    if top:
+        return (4, top)
     if flush:
-        return (3, *vs)
-    if vs[0] == vs[1] or vs[1] == vs[2]:
-        pair = vs[1]
-        kick = vs[2] if vs[0] == vs[1] else vs[0]
+        return (3, *vals)
+    if vals[0] == vals[1] or vals[1] == vals[2]:
+        pair = vals[1]
+        kick = vals[2] if vals[0] == vals[1] else vals[0]
         return (2, pair, kick)
-    return (1, *vs)
+    return (1, *vals)
 
 
-NAMES = {6: "Trail", 5: "Pure Sequence", 4: "Sequence", 3: "Colour", 2: "Pair", 1: "High Card"}
-
-
-class TeenPattiGame(BaseGame):
+class TeenPattiGame(CardGame):
     name = "teenpatti"
-    min_players, max_players = 2, 6
+    min_players = 2
+    max_players = 6
 
     def __init__(self, players, rng=None):
         if not 2 <= len(players) <= 6:
             raise ValueError("Teen Patti needs 2-6 players")
-        self.rng = rng or random.SystemRandom()
-        self.players = list(players)
-        deck = [(v, s) for v in range(2, 15) for s in SUITS]
-        self.rng.shuffle(deck)
-        self.hands = {u: [deck.pop() for _ in range(3)] for u in self.players}
-        self.chips = {u: START_CHIPS - BOOT for u in self.players}
-        self.pot = BOOT * len(self.players)
+        self._init_common(players, rng)
+        self.stack = {u: START_STACK for u in self.players}
+        self.hands, self.seen, self.packed, self.put = {}, {}, {}, {}
+        self.pot = 0
         self.stake = BOOT
-        self.seen = {u: False for u in self.players}
-        self.folded = set()
-        self.turn_idx, self.actions = 0, 0
-        self.seq, self.last_event, self.reveal = 0, None, None
-        self.winner, self.finished, self.draw = None, False, False
+        self.round = 0
+        self.dealer = -1
+        self.idx = 0
+        self.actions = 0
+        self.log, self.event, self.last_round = [], None, None
+        self._start_round()
 
-    def active(self):
-        return [u for u in self.players if u not in self.folded]
-
+    # ------------------------------------------------------------ flow
     def current(self):
-        return None if self.finished else self.players[self.turn_idx]
+        return None if self.finished else self.players[self.idx]
 
-    def _next(self):
-        for _ in range(len(self.players)):
-            self.turn_idx = (self.turn_idx + 1) % len(self.players)
-            if self.players[self.turn_idx] not in self.folded:
+    def _active(self):
+        return [u for u in self.players if u in self.hands and not self.packed.get(u)]
+
+    def _start_round(self):
+        able = [u for u in self.players if self.stack[u] >= BOOT]
+        if self.round >= ROUNDS or len(able) < 2:
+            self._decide(dict(self.stack))
+            return
+        self.round += 1
+        self.dealer = (self.dealer + 1) % len(self.players)
+        while self.stack[self.players[self.dealer]] < BOOT:
+            self.dealer = (self.dealer + 1) % len(self.players)
+        deck = deck52()
+        self.rng.shuffle(deck)
+        self.hands = {u: [deck.pop() for _ in range(3)] for u in able}
+        self.seen = {u: False for u in able}
+        self.packed = {u: False for u in able}
+        self.put = {u: BOOT for u in able}
+        for u in able:
+            self.stack[u] -= BOOT
+        self.pot = BOOT * len(able)
+        self.stake = BOOT
+        self.actions = 0
+        self.idx = self.dealer
+        self._next_idx()
+        self._ev(kind="deal", round=self.round, players=able, pot=self.pot)
+
+    def _next_idx(self):
+        n = len(self.players)
+        for _ in range(n):
+            self.idx = (self.idx + 1) % n
+            u = self.players[self.idx]
+            if u in self.hands and not self.packed.get(u):
                 return
 
-    def cost(self, uid, stake=None):
-        s = self.stake if stake is None else stake
-        return s * 2 if self.seen[uid] else s
+    def _cost(self, uid, raise_=False):
+        stake = min(self.stake * 2, MAX_STAKE) if raise_ else self.stake
+        return stake, stake * (2 if self.seen[uid] else 1)
 
-    def _event(self, uid, kind, amount=0):
-        self.seq += 1
-        self.last_event = {"seq": self.seq, "uid": uid, "kind": kind, "amount": amount, "pot": self.pot}
+    def _pay(self, uid, amount):
+        amount = min(amount, self.stack[uid])
+        self.stack[uid] -= amount
+        self.put[uid] += amount
+        self.pot += amount
+        return amount
 
+    def _end_round(self, winners, reason, reveal):
+        share = self.pot // len(winners)
+        for w in winners:
+            self.stack[w] += share
+        self.stack[winners[0]] += self.pot - share * len(winners)
+        hands = {u: list(self.hands[u]) for u in reveal}
+        ranks = {u: CAT_NAMES[hand_rank(self.hands[u])[0]] for u in reveal}
+        self.last_round = {"seq": self._bump(), "round": self.round, "winners": winners, "pot": self.pot,
+                           "reason": reason, "hands": hands, "ranks": ranks}
+        self._ev(kind="round_end", winners=winners, pot=self.pot, reason=reason)
+        self.hands, self.packed, self.seen = {}, {}, {}
+        self.pot = 0
+        self._start_round()
+
+    def _showdown(self, asker=None, reason="show"):
+        act = self._active()
+        ranks = {u: hand_rank(self.hands[u]) for u in act}
+        top = max(ranks.values())
+        win = [u for u in act if ranks[u] == top]
+        if len(win) > 1 and asker in win:  # a tie goes against the player who asked for the show
+            win = [u for u in win if u != asker] or win
+        self._end_round(win, reason, act)
+
+    # ------------------------------------------------------------ actions
     def handle(self, uid, msg):
         if self.finished:
             raise GameError("The game is over")
-        if uid not in self.hands or uid in self.folded:
-            raise GameError("You are not in this hand")
         t = msg.get("t")
+        if uid not in self.hands or self.packed.get(uid):
+            raise GameError("You are not in this hand")
         if t == "see":
             if self.seen[uid]:
-                return
+                raise GameError("You already looked at your cards")
             self.seen[uid] = True
-            self._event(uid, "see")
+            self._ev(kind="see", uid=uid)
             return
         if uid != self.current():
             raise GameError("It's not your turn")
-        n_act = len(self.active())
+        act = self._active()
         if t == "pack":
-            self.folded.add(uid)
-            self._event(uid, "pack")
-            if len(self.active()) == 1:
-                return self._end(self.active()[0], "everyone else packed")
-            self._next()
-        elif t in ("chaal", "raise"):
-            stake = self.stake
-            if t == "raise":
-                if self.stake >= MAX_STAKE:
-                    raise GameError("Stake is already at the limit")
-                stake = self.stake * 2
-            c = self.cost(uid, stake)
-            if c > self.chips[uid]:
+            self.packed[uid] = True
+            self._ev(kind="pack", uid=uid)
+            rest = self._active()
+            if len(rest) == 1:
+                return self._end_round(rest, "last", [])
+            self._after_action()
+        elif t == "chaal":
+            rs = bool(msg.get("raise")) if "raise" in msg else False
+            if "raise" in msg and not isinstance(msg["raise"], bool):
+                raise GameError("Bad value")
+            stake, cost = self._cost(uid, rs)
+            if cost > self.stack[uid]:
                 raise GameError("Not enough chips: pack or show")
-            self.chips[uid] -= c
-            self.pot += c
             self.stake = stake
-            self._event(uid, t, c)
-            self.actions += 1
-            self._next()
+            self._pay(uid, cost)
+            self._ev(kind="raise" if rs and stake > 0 and cost else "chaal", uid=uid, amount=cost, stake=self.stake,
+                     blind=not self.seen[uid])
+            self._after_action()
         elif t == "show":
-            if n_act != 2:
-                raise GameError("Show is only possible with two players left")
-            c = min(self.cost(uid), self.chips[uid])
-            self.chips[uid] -= c
-            self.pot += c
-            self._event(uid, "show", c)
-            self._showdown()
-            return
+            if len(act) != 2:
+                raise GameError("You can only ask for a show when two players are left")
+            _, cost = self._cost(uid)
+            paid = self._pay(uid, cost)
+            self._ev(kind="show", uid=uid, amount=paid)
+            self._showdown(asker=uid)
         else:
             raise GameError("Unknown action")
-        if self.actions >= MAX_ACTIONS and not self.finished:
-            self._showdown()
 
-    def _showdown(self):
-        act = self.active()
-        best = max(act, key=lambda u: rank(self.hands[u]))
-        self._end(best, NAMES[rank(self.hands[best])[0]])
-
-    def _end(self, winner, why):
-        self.finished, self.winner = True, winner
-        self.chips[winner] += self.pot
-        self.reveal = {"why": why, "pot": self.pot, "hands": {str(u): self.hands[u] for u in self.active()},
-                       "names": {str(u): NAMES[rank(self.hands[u])[0]] for u in self.active()}}
-        self.pot = 0
+    def _after_action(self):
+        self.actions += 1
+        if self.actions >= MAX_ACTIONS:
+            return self._showdown(reason="forced")
+        self._next_idx()
 
     def auto_play(self):
         if self.finished:
             return
         uid = self.current()
-        r = rank(self.hands[uid])
-        strength = r[0] + (r[1] / 30 if r[0] < 3 else 0)
-        if not self.seen[uid] and (self.actions >= 2 or self.rng.random() < 0.3):
-            self.seen[uid] = True
-            self._event(uid, "see")
-        n = len(self.active())
-        if self.seen[uid] and strength < 1.6 and self.rng.random() < 0.55:
-            return self.handle(uid, {"t": "pack"})
-        if n == 2 and (strength >= 2 or self.cost(uid) > self.chips[uid]):
+        rank = hand_rank(self.hands[uid])
+        _, cost = self._cost(uid)
+        act = self._active()
+        can = cost <= self.stack[uid]
+        strong = rank[0] >= 2 or rank[1] >= 12 or (not self.seen[uid] and self.rng.random() < 0.75)
+        if len(act) == 2 and (rank[0] >= 2 or not can):
             return self.handle(uid, {"t": "show"})
-        if self.cost(uid) > self.chips[uid]:
-            return self.handle(uid, {"t": "show"} if n == 2 else {"t": "pack"})
-        if strength >= 2.5 and self.stake < MAX_STAKE and self.cost(uid, self.stake * 2) <= self.chips[uid] and self.rng.random() < 0.4:
-            return self.handle(uid, {"t": "raise"})
+        if not can:
+            return self.handle(uid, {"t": "pack"})
+        if not strong and self.rng.random() < 0.7:
+            return self.handle(uid, {"t": "pack"})
+        if rank[0] >= 4 and self.stake < MAX_STAKE and self.stack[uid] >= self._cost(uid, True)[1] and self.rng.random() < 0.5:
+            return self.handle(uid, {"t": "chaal", "raise": True})
         self.handle(uid, {"t": "chaal"})
 
     def remove_player(self, uid):
-        if uid not in self.hands or uid in self.folded or self.finished:
+        if uid not in self.players or self.finished:
             return
-        was = self.current() == uid
-        self.folded.add(uid)
-        if len(self.active()) == 1:
-            return self._end(self.active()[0], "everyone else left")
-        if was:
-            self._next()
+        cur = self.current() == uid
+        if uid in self.hands and not self.packed.get(uid):
+            self.packed[uid] = True
+            rest = self._active()
+            if len(rest) == 1:
+                self.stack[uid] = 0
+                self._end_round(rest, "last", [])
+                cur = False
+            elif cur:
+                self._next_idx()
+        self.stack[uid] = 0
+        if self.players.count(uid) and not self.finished:
+            able = [u for u in self.players if self.stack[u] >= BOOT]
+            if len(able) < 2 and not self.hands:
+                self._decide(dict(self.stack))
 
-    def public_state(self):
-        return {"kind": "teenpatti", "players": [{"uid": u, "chips": self.chips[u], "seen": self.seen[u], "folded": u in self.folded} for u in self.players],
-                "pot": self.pot, "stake": self.stake, "turn": self.current(), "n_active": len(self.active()),
-                "last_event": self.last_event, "reveal": self.reveal, "hand": None, "rankname": None, "max_stake": MAX_STAKE,
-                "costs": {}, "winner": self.winner, "draw": self.draw}
-
-    def view(self, uid):
-        st = self.public_state()
-        if uid in self.hands:
-            st["seen_me"] = self.seen[uid]
-            if self.seen[uid] or self.finished:
-                st["hand"] = self.hands[uid]
-                st["rankname"] = NAMES[rank(self.hands[uid])[0]]
-            st["costs"] = {"chaal": self.cost(uid), "raise": self.cost(uid, min(self.stake * 2, MAX_STAKE)), "show": self.cost(uid)}
-        return st
+    # ------------------------------------------------------------ views
+    def _view(self, uid):
+        mine = uid in self.hands and not self.packed.get(uid)
+        cost = raise_cost = None
+        if mine and uid == self.current() and not self.finished:
+            cost = self._cost(uid)[1]
+            raise_cost = self._cost(uid, True)[1]
+        rows = []
+        for u in self.players:
+            if u in self.hands:
+                st = "packed" if self.packed[u] else ("seen" if self.seen[u] else "blind")
+            else:
+                st = "out" if self.stack[u] < BOOT else "wait"
+            rows.append({"uid": u, "stack": self.stack[u], "put": self.put.get(u, 0), "state": st, "n": 3 if u in self.hands else 0})
+        hand = list(self.hands[uid]) if (uid in self.hands and self.seen.get(uid)) else []
+        return {
+            "kind": "teenpatti", "turn": self.current(), "round": self.round, "rounds": ROUNDS, "pot": self.pot,
+            "stake": self.stake, "boot": BOOT, "players": rows, "hand": hand, "blind": bool(mine and not self.seen[uid]),
+            "hand_rank": CAT_NAMES[hand_rank(self.hands[uid])[0]] if hand else None,
+            "cost": cost, "raise_cost": raise_cost if (raise_cost and self.stake < MAX_STAKE) else None,
+            "can_show": bool(mine and uid == self.current() and len(self._active()) == 2),
+            "event": self.event, "log": self.log, "last_round": self.last_round,
+            "winner": self.winner, "winners": self.winners, "draw": self.draw,
+        }

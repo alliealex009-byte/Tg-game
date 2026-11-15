@@ -1,104 +1,126 @@
-"""Reversi / Othello 8x8. Passes happen automatically when a player has no move."""
+"""Reversi / Othello 8x8. players[0] is black and moves first. A player with no move is passed automatically."""
 from __future__ import annotations
 
 import random
 
 from .base import BaseGame, GameError
 
-DIRS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-W = [[100, -20, 10, 5, 5, 10, -20, 100], [-20, -50, -2, -2, -2, -2, -50, -20], [10, -2, 1, 1, 1, 1, -2, 10], [5, -2, 1, 0, 0, 1, -2, 5]]
-W = W + W[::-1]
+DIRS = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
+W = [100, -20, 10, 5, 5, 10, -20, 100,
+     -20, -50, -2, -2, -2, -2, -50, -20,
+     10, -2, 1, 1, 1, 1, -2, 10,
+     5, -2, 1, 0, 0, 1, -2, 5,
+     5, -2, 1, 0, 0, 1, -2, 5,
+     10, -2, 1, 1, 1, 1, -2, 10,
+     -20, -50, -2, -2, -2, -2, -50, -20,
+     100, -20, 10, 5, 5, 10, -20, 100]
+
+
+def flips(b, cell, me):
+    """Cells flipped when `me` (0/1) plays `cell`; empty list if illegal."""
+    if b[cell] is not None:
+        return []
+    r, c = divmod(cell, 8)
+    out = []
+    for dr, dc in DIRS:
+        line = []
+        rr, cc = r + dr, c + dc
+        while 0 <= rr < 8 and 0 <= cc < 8 and b[rr * 8 + cc] == 1 - me:
+            line.append(rr * 8 + cc)
+            rr += dr
+            cc += dc
+        if line and 0 <= rr < 8 and 0 <= cc < 8 and b[rr * 8 + cc] == me:
+            out += line
+    return out
+
+
+def valid(b, me):
+    return [i for i in range(64) if b[i] is None and flips(b, i, me)]
 
 
 class ReversiGame(BaseGame):
     name = "reversi"
-    min_players = max_players = 2
+    min_players = 2
+    max_players = 2
 
     def __init__(self, players, rng=None):
         if len(players) != 2:
             raise ValueError("Reversi needs exactly 2 players")
         self.rng = rng or random.SystemRandom()
         self.players = list(players)
-        self.mark = {self.players[0]: "B", self.players[1]: "W"}
-        self.board = [""] * 64
-        self.board[27], self.board[36], self.board[28], self.board[35] = "W", "W", "B", "B"
-        self.turn_mark = "B"
-        self.seq, self.last_move, self.note = 0, None, ""
-        self.winner, self.finished, self.draw = None, False, False
-
-    def _uid(self, m):
-        return next(u for u in self.players if self.mark[u] == m)
+        self.board = [None] * 64  # 0 = black (players[0]), 1 = white
+        self.board[27], self.board[36], self.board[28], self.board[35] = 1, 1, 0, 0
+        self.turn_idx = 0
+        self.winner = None
+        self.finished = False
+        self.draw = False
+        self.seq = 0
+        self.last_move = None
 
     def current(self):
-        return None if self.finished else self._uid(self.turn_mark)
-
-    def flips(self, sq, m, board=None):
-        b = board or self.board
-        if b[sq]:
-            return []
-        r, c = divmod(sq, 8)
-        opp = "W" if m == "B" else "B"
-        out = []
-        for dr, dc in DIRS:
-            line, rr, cc = [], r + dr, c + dc
-            while 0 <= rr < 8 and 0 <= cc < 8 and b[rr * 8 + cc] == opp:
-                line.append(rr * 8 + cc)
-                rr, cc = rr + dr, cc + dc
-            if line and 0 <= rr < 8 and 0 <= cc < 8 and b[rr * 8 + cc] == m:
-                out += line
-        return out
-
-    def moves(self, m):
-        return {sq: f for sq in range(64) if (f := self.flips(sq, m))}
+        return None if self.finished else self.players[self.turn_idx]
 
     def handle(self, uid, msg):
         if self.finished:
             raise GameError("The game is over")
         if uid != self.current():
             raise GameError("It's not your turn")
-        sq = msg.get("cell")
-        if msg.get("t") != "place" or isinstance(sq, bool) or not isinstance(sq, int) or not 0 <= sq < 64:
-            raise GameError("Bad move")
-        if not self.flips(sq, self.turn_mark):
+        if msg.get("t") != "place":
+            raise GameError("Unknown action")
+        cell = msg.get("cell")
+        if isinstance(cell, bool) or not isinstance(cell, int) or not 0 <= cell < 64:
+            raise GameError("Bad cell")
+        if not flips(self.board, cell, self.turn_idx):
             raise GameError("You must flip at least one disc")
-        self._place(sq)
+        self._play(cell)
 
-    def _place(self, sq):
-        m = self.turn_mark
-        fl = self.flips(sq, m)
-        self.board[sq] = m
-        for f in fl:
-            self.board[f] = m
+    def _play(self, cell):
+        me = self.turn_idx
+        fl = flips(self.board, cell, me)
+        self.board[cell] = me
+        for i in fl:
+            self.board[i] = me
         self.seq += 1
-        self.last_move = {"seq": self.seq, "uid": self._uid(m), "cell": sq, "flips": fl}
-        self.note = ""
-        opp = "W" if m == "B" else "B"
-        if self.moves(opp):
-            self.turn_mark = opp
-        elif self.moves(m):
-            self.note = f"{'White' if opp == 'W' else 'Black'} has no move and passes"
+        passed = None
+        if valid(self.board, 1 - me):
+            self.turn_idx = 1 - me
+        elif valid(self.board, me):
+            passed = self.players[1 - me]  # opponent has no move: same player continues
         else:
-            self.finished = True
-            b, w = self.board.count("B"), self.board.count("W")
-            if b == w:
-                self.draw = True
-            else:
-                self.winner = self._uid("B" if b > w else "W")
+            self._end()
+        self.last_move = {"uid": self.players[me], "cell": cell, "flips": fl, "passed": passed, "seq": self.seq}
+
+    def _end(self):
+        self.finished = True
+        a, b = self.board.count(0), self.board.count(1)
+        if a == b:
+            self.draw = True
+        else:
+            self.winner = self.players[0 if a > b else 1]
 
     def auto_play(self):
         if self.finished:
             return
-        mv = self.moves(self.turn_mark)
-        self._place(max(mv, key=lambda s: W[s // 8][s % 8] + len(mv[s]) * 2 + self.rng.random() * 6))
+        ms = valid(self.board, self.turn_idx)
+        if not ms:
+            return
+        self._play(max(ms, key=lambda c: W[c] + len(flips(self.board, c, self.turn_idx)) * 0.5 + self.rng.random()))
 
     def remove_player(self, uid):
-        if uid not in self.mark or self.finished:
+        if uid not in self.players or self.finished:
             return
-        self.finished, self.winner = True, next(u for u in self.players if u != uid)
+        self.finished = True
+        self.winner = next(u for u in self.players if u != uid)
 
     def public_state(self):
-        return {"kind": "reversi", "players": [{"uid": u, "mark": self.mark[u]} for u in self.players],
-                "board": self.board, "turn": self.current(),
-                "valid": [] if self.finished else sorted(self.moves(self.turn_mark)),
-                "counts": {"B": self.board.count("B"), "W": self.board.count("W")},
-                "last_move": self.last_move, "note": self.note, "winner": self.winner, "draw": self.draw}
+        return {
+            "kind": "reversi",
+            "players": [{"uid": u, "color": c} for u, c in zip(self.players, ("black", "white"))],
+            "board": self.board,
+            "turn": self.current(),
+            "legal": [] if self.finished else valid(self.board, self.turn_idx),
+            "counts": [self.board.count(0), self.board.count(1)],
+            "last_move": self.last_move,
+            "winner": self.winner,
+            "draw": self.draw,
+        }

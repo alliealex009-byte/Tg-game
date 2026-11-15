@@ -1,205 +1,214 @@
-"""UNO for 2-6 players. Cards are strings: colour+value (R5, YS skip, GR reverse, BD draw-two) or WW wild / WF wild-draw-four."""
+"""UNO: 108 cards, colour choice on wilds, +4 only without a colour match, draw-then-may-play."""
 from __future__ import annotations
 
-import random
+from .base import GameError
+from .cards_common import CardGame
 
-from .base import BaseGame, GameError
+COLORS = "RGBY"
+HAND = 7
 
-COLORS = "RYGB"
 
-
-def new_deck(rng):
+def uno_deck():
     d = []
     for c in COLORS:
         d.append(c + "0")
-        for v in "123456789SRD":
-            d += [c + v] * 2
-    d += ["WW"] * 4 + ["WF"] * 4
-    rng.shuffle(d)
+        for v in list("123456789") + ["S", "R", "D"]:
+            d += [c + v, c + v]
+    d += ["W"] * 4 + ["W4"] * 4
     return d
 
 
-class UnoGame(BaseGame):
+def is_wild(card):
+    return card[0] == "W"
+
+
+class UnoGame(CardGame):
     name = "uno"
-    min_players, max_players = 2, 6
+    min_players = 2
+    max_players = 6
 
     def __init__(self, players, rng=None):
         if not 2 <= len(players) <= 6:
             raise ValueError("UNO needs 2-6 players")
-        self.rng = rng or random.SystemRandom()
-        self.players = list(players)
-        self.deck = new_deck(self.rng)
-        self.hands = {u: [self.deck.pop() for _ in range(7)] for u in self.players}
-        while True:  # start card must be a plain number
-            top = self.deck.pop()
-            if top[0] in COLORS and top[1].isdigit():
+        self._init_common(players, rng)
+        self.pile = uno_deck()
+        self.rng.shuffle(self.pile)
+        self.hands = {u: [self.pile.pop() for _ in range(HAND)] for u in self.players}
+        while True:  # the starting card must be a plain number card
+            c = self.pile.pop()
+            if not is_wild(c) and c[1:].isdigit():
                 break
-            self.deck.insert(0, top)
-        self.pile = [top]
-        self.color = top[0]
-        self.dir = 1
-        self.turn_idx = 0
-        self.drawn = None       # index in the hand of a card just drawn that may be played
-        self.left = set()
-        self.seq, self.last_event = 0, None
-        self.winner, self.finished, self.draw = None, False, False
+            self.pile.insert(0, c)
+        self.discard = [c]
+        self.top, self.color = c, c[0]
+        self.dir, self.idx = 1, 0
+        self.phase, self.drawn = "play", None
+        self.event = None
 
+    # ---- helpers
     def current(self):
-        return None if self.finished else self.players[self.turn_idx]
+        return None if self.finished else self.players[self.idx]
 
-    def _alive(self):
-        return [u for u in self.players if u not in self.left]
+    def _legal(self, uid, card):
+        if is_wild(card):
+            if card == "W4":
+                rest = list(self.hands[uid])
+                rest.remove(card)
+                return not any((not is_wild(x)) and x[0] == self.color for x in rest)
+            return True
+        return card[0] == self.color or (not is_wild(self.top) and card[1:] == self.top[1:])
 
-    def _step(self, n=1):
-        for _ in range(n):
-            for _k in range(len(self.players)):
-                self.turn_idx = (self.turn_idx + self.dir) % len(self.players)
-                if self.players[self.turn_idx] not in self.left:
-                    break
+    def playable(self, uid):
+        h = self.hands.get(uid, [])
+        if self.phase == "drawn":
+            return [self.drawn] if self.drawn in h and self._legal(uid, self.drawn) else []
+        return sorted({c for c in h if self._legal(uid, c)})
 
-    def _draw(self, uid, n):
+    def _take(self, uid, n):
         got = []
         for _ in range(n):
-            if not self.deck:
-                keep = self.pile.pop()
-                self.deck, self.pile = self.pile, [keep]
-                self.rng.shuffle(self.deck)
-                if not self.deck:
-                    break
-            c = self.deck.pop()
+            if not self.pile and len(self.discard) > 1:
+                rest = self.discard[:-1]
+                self.discard = [self.discard[-1]]
+                self.rng.shuffle(rest)
+                self.pile = rest
+            if not self.pile:
+                break
+            c = self.pile.pop()
             self.hands[uid].append(c)
             got.append(c)
         return got
 
-    def playable(self, card):
-        top = self.pile[-1]
-        return card[0] == "W" or card[0] == self.color or card[1] == top[1]
+    def _step(self, k=1):
+        self.idx = (self.idx + self.dir * k) % len(self.players)
 
+    def _event(self, **kw):
+        kw["seq"] = self._bump()
+        self.event = kw
+
+    def _end_turn(self, skip=0):
+        self.phase, self.drawn = "play", None
+        self._step(1 + skip)
+        if self.steps > self.MAX_STEPS:
+            self._decide({u: -len(h) for u, h in self.hands.items()})
+
+    # ---- actions
     def handle(self, uid, msg):
         if self.finished:
             raise GameError("The game is over")
+        t = msg.get("t")
+        if t == "uno":
+            if len(self.hands.get(uid, [])) != 1:
+                raise GameError("You can only shout UNO with one card left")
+            self._event(kind="uno", uid=uid)
+            return
         if uid != self.current():
             raise GameError("It's not your turn")
-        t = msg.get("t")
-        hand = self.hands[uid]
         if t == "play":
-            i = msg.get("card")
-            if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(hand):
-                raise GameError("Bad card")
-            if self.drawn is not None and i != self.drawn:
+            card = msg.get("card")
+            if not isinstance(card, str) or card not in self.hands[uid]:
+                raise GameError("You don't have that card")
+            if self.phase == "drawn" and card != self.drawn:
                 raise GameError("Play the card you drew, or pass")
-            card = hand[i]
-            if not self.playable(card):
-                raise GameError("That card can't be played")
-            col = msg.get("color")
-            if card[0] == "W" and col not in COLORS:
-                raise GameError("Choose a colour")
-            self._play(uid, i, col)
+            if not self._legal(uid, card):
+                raise GameError("You can't play that card")
+            col = None
+            if is_wild(card):
+                col = self._str(msg.get("color"), "colour", set(COLORS))
+            self._play(uid, card, col)
         elif t == "draw":
-            if self.drawn is not None:
+            if self.phase != "play":
                 raise GameError("You already drew")
-            got = self._draw(uid, 1)
-            self.seq += 1
-            self.last_event = {"seq": self.seq, "uid": uid, "kind": "draw", "n": len(got)}
-            if got and self.playable(got[0]):
-                self.drawn = len(hand) - 1
+            got = self._take(uid, 1)
+            if got and self._legal(uid, got[0]):
+                self.phase, self.drawn = "drawn", got[0]
+                self._event(kind="draw", uid=uid, n=1, cards=got, may_play=True)
             else:
-                self._step()
+                self._event(kind="draw", uid=uid, n=len(got), cards=got)
+                self._end_turn()
         elif t == "pass":
-            if self.drawn is None:
+            if self.phase != "drawn":
                 raise GameError("Draw a card first")
-            self.drawn = None
-            self.seq += 1
-            self.last_event = {"seq": self.seq, "uid": uid, "kind": "pass"}
-            self._step()
+            self._event(kind="pass", uid=uid)
+            self._end_turn()
         else:
             raise GameError("Unknown action")
 
-    def _play(self, uid, i, col):
-        card = self.hands[uid].pop(i)
-        self.pile.append(card)
-        self.color = col if card[0] == "W" else card[0]
-        self.drawn = None
-        ev = {"uid": uid, "kind": "play", "card": card, "color": self.color, "n": 0, "target": None}
-        if not self.hands[uid]:
-            self.seq += 1
-            self.last_event = dict(ev, seq=self.seq)
-            self.finished, self.winner = True, uid
-            return
-        v = card[1]
-        if v == "R" and card[0] != "W":
-            if len(self._alive()) == 2:
-                self._step(2)
-            else:
-                self.dir *= -1
-                self._step()
+    def _play(self, uid, card, col):
+        self.hands[uid].remove(card)
+        self.discard.append(card)
+        self.top, self.color = card, (col or card[0])
+        v = card[1:]
+        skip, victim, n = 0, None, 0
+        nxt = self.players[(self.idx + self.dir) % len(self.players)]
+        if card == "W4":
+            victim, n = nxt, 4
+        elif v == "D":
+            victim, n = nxt, 2
         elif v == "S":
-            self._step()
-            ev["target"] = self.current()
-            self._step()
-        elif v == "D" or card == "WF":
-            n = 2 if v == "D" else 4
-            self._step()
-            tgt = self.current()
-            ev["n"], ev["target"] = len(self._draw(tgt, n)), tgt
-            self._step()
-        else:
-            self._step()
-        self.seq += 1
-        ev["seq"] = self.seq
-        ev["uno"] = len(self.hands[uid]) == 1
-        self.last_event = ev
+            skip, victim = 1, nxt
+        elif v == "R":
+            self.dir = -self.dir
+            if len(self.players) == 2:
+                skip = 1  # reverse acts as skip
+        if n:
+            self._take(victim, n)
+            skip = 1
+        self._event(kind="play", uid=uid, card=card, color=self.color, victim=victim, n=n, dir=self.dir,
+                    uno=len(self.hands[uid]) == 1, skip=bool(skip))
+        if not self.hands[uid]:
+            self.winner, self.finished = uid, True
+            return
+        self._end_turn(skip)
 
     def auto_play(self):
         if self.finished:
             return
         uid = self.current()
-        hand = self.hands[uid]
-        if self.drawn is not None:
-            self._play(uid, self.drawn, self._best_color(hand, self.drawn))
-            return
-        opts = [i for i, c in enumerate(hand) if self.playable(c)]
-        if not opts:
-            self.handle(uid, {"t": "draw"})
-            if self.drawn is not None and not self.finished and self.current() == uid:
-                self._play(uid, self.drawn, self._best_color(hand, self.drawn))
-            return
-        pick = max(opts, key=lambda i: (hand[i][0] != "W") * 2 + (hand[i][1] in "SRD") + self.rng.random())
-        self._play(uid, pick, self._best_color(hand, pick))
-
-    def _best_color(self, hand, skip):
-        cnt = {c: 0 for c in COLORS}
-        for j, c in enumerate(hand):
-            if j != skip and c[0] in COLORS:
-                cnt[c[0]] += 1
-        return max(COLORS, key=lambda c: cnt[c] + self.rng.random() * 0.1)
+        pl = self.playable(uid)
+        if self.phase == "drawn" and not pl:
+            return self.handle(uid, {"t": "pass"})
+        if not pl:
+            return self.handle(uid, {"t": "draw"})
+        plain = [c for c in pl if not is_wild(c)]
+        acts = [c for c in plain if c[1:] in ("S", "R", "D")]
+        card = self.rng.choice(acts or plain or pl)
+        msg = {"t": "play", "card": card}
+        if is_wild(card):
+            cnt = {c: 0 for c in COLORS}
+            for x in self.hands[uid]:
+                if not is_wild(x):
+                    cnt[x[0]] += 1
+            msg["color"] = max(COLORS, key=lambda c: cnt[c])
+        self.handle(uid, msg)
 
     def remove_player(self, uid):
-        if uid not in self.hands or uid in self.left or self.finished:
+        if uid not in self.players or self.finished:
             return
-        was = self.current() == uid
-        self.left.add(uid)
-        self.deck += self.hands[uid]
-        self.rng.shuffle(self.deck)
-        self.hands[uid] = []
-        act = self._alive()
-        if len(act) <= 1:
-            self.finished, self.winner = True, act[0] if act else None
-        elif was:
-            self.drawn = None
-            self._step()
+        p = self.players.index(uid)
+        self.pile = self.hands.pop(uid) + self.pile
+        self.players.remove(uid)
+        if len(self.players) == 1:
+            self.winner, self.finished = self.players[0], True
+            return
+        if p < self.idx:
+            self.idx -= 1
+        elif p == self.idx:
+            self.phase, self.drawn = "play", None
+            self.idx = (self.idx + (0 if self.dir == 1 else -1)) % len(self.players)
+        self.idx %= len(self.players)
 
-    def public_state(self):
-        return {"kind": "uno", "players": [{"uid": u, "count": len(self.hands[u]), "left": u in self.left} for u in self.players],
-                "top": self.pile[-1], "color": self.color, "dir": self.dir, "turn": self.current(), "deck": len(self.deck),
-                "drawn": self.drawn, "last_event": self.last_event, "hand": None, "playable": [],
-                "winner": self.winner, "draw": self.draw}
-
-    def view(self, uid):
-        st = self.public_state()
-        if uid in self.hands:
-            h = self.hands[uid]
-            st["hand"] = h
-            if uid == self.current() and not self.finished:
-                st["playable"] = [i for i, c in enumerate(h) if self.playable(c) and (self.drawn is None or i == self.drawn)]
-        return st
+    def _view(self, uid):
+        ev = None
+        if self.event:
+            ev = {k: v for k, v in self.event.items() if k != "cards"}
+            if self.event.get("cards") and self.event.get("uid") == uid:
+                ev["cards"] = self.event["cards"]
+        return {
+            "kind": "uno", "turn": self.current(), "dir": self.dir, "top": self.top, "cur": self.color,
+            "phase": self.phase, "draw_count": len(self.pile), "event": ev,
+            "players": [{"uid": u, "n": len(self.hands[u])} for u in self.players],
+            "hand": list(self.hands[uid]) if uid in self.hands else [],
+            "playable": self.playable(uid) if uid == self.current() else [],
+            "winner": self.winner, "draw": self.draw,
+        }

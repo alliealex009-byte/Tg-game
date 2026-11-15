@@ -1,4 +1,5 @@
-"""Checkers (American draughts): forced captures, multi-jumps (continue with the same piece), kings."""
+"""English draughts (8x8). players[0] plays 'w' (bottom, moves up), players[1] plays 'b' (top, moves down).
+Captures are compulsory and multi-jumps must be completed. A move is sent as a path of landing squares."""
 from __future__ import annotations
 
 import random
@@ -6,72 +7,102 @@ import random
 from .base import BaseGame, GameError
 
 
-def _on(r, c):
-    return 0 <= r < 8 and 0 <= c < 8
+def start_board():
+    b = [""] * 64
+    for r in range(8):
+        for c in range(8):
+            if (r + c) % 2 == 1:
+                if r < 3:
+                    b[r * 8 + c] = "b"
+                elif r > 4:
+                    b[r * 8 + c] = "w"
+    return b
+
+
+def jumps_from(b, sq, piece, taken):
+    """All maximal capture paths for `piece` standing on sq. Returns list of (path, captured_squares)."""
+    r, c = divmod(sq, 8)
+    own = piece.lower()
+    king = piece.isupper()
+    dirs = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+    if not king:
+        dirs = [d for d in dirs if (d[0] < 0) == (own == "w")]
+    res = []
+    for dr, dc in dirs:
+        mr, mc, lr, lc = r + dr, c + dc, r + 2 * dr, c + 2 * dc
+        if not (0 <= lr < 8 and 0 <= lc < 8):
+            continue
+        mid = mr * 8 + mc
+        land = lr * 8 + lc
+        if b[mid] and b[mid].lower() != own and mid not in taken and b[land] == "":
+            crowned = (not king) and lr == (0 if own == "w" else 7)
+            nxt = jumps_from(b, land, piece.upper() if crowned else piece, taken + [mid]) if not crowned else []
+            if nxt:
+                for p, cp in nxt:
+                    res.append(([land] + p, [mid] + cp))
+            else:
+                res.append(([land], [mid]))
+    return res
+
+
+def legal_moves(b, side):
+    """List of (path, captured) with path including the start square."""
+    caps, simple = [], []
+    for sq in range(64):
+        p = b[sq]
+        if not p or p.lower() != side:
+            continue
+        # the moving piece leaves its square, so it can be re-crossed: clear it while searching
+        b[sq] = ""
+        for path, cp in jumps_from(b, sq, p, []):
+            caps.append(([sq] + path, cp))
+        b[sq] = p
+        if caps:
+            continue
+        r, c = divmod(sq, 8)
+        dirs = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        if p.islower():
+            dirs = [d for d in dirs if (d[0] < 0) == (side == "w")]
+        for dr, dc in dirs:
+            rr, cc = r + dr, c + dc
+            if 0 <= rr < 8 and 0 <= cc < 8 and not b[rr * 8 + cc]:
+                simple.append(([sq, rr * 8 + cc], []))
+    return caps if caps else simple
 
 
 class CheckersGame(BaseGame):
     name = "checkers"
-    min_players = max_players = 2
+    min_players = 2
+    max_players = 2
+    MAX_PLIES = 300
 
     def __init__(self, players, rng=None):
         if len(players) != 2:
             raise ValueError("Checkers needs exactly 2 players")
         self.rng = rng or random.SystemRandom()
         self.players = list(players)
-        self.side = {self.players[0]: "r", self.players[1]: "b"}  # red moves up (towards row 0)
-        self.board = [""] * 64
-        for r in range(8):
-            for c in range(8):
-                if (r + c) % 2 == 1:
-                    if r < 3:
-                        self.board[r * 8 + c] = "b"
-                    elif r > 4:
-                        self.board[r * 8 + c] = "r"
-        self.turn_side = "r"
-        self.chain = None
-        self.idle = 0
-        self.seq, self.last_move = 0, None
-        self.winner, self.finished, self.draw = None, False, False
+        self.board = start_board()
+        self.turn_idx = 0
+        self.winner = None
+        self.finished = False
+        self.draw = False
+        self.reason = None
+        self.seq = 0
+        self.last_move = None
+        self.quiet = 0      # plies since a capture or a man move
+        self.plies = 0
+        self._moves = None
 
-    def _uid(self, side):
-        return next(u for u in self.players if self.side[u] == side)
+    def side(self):
+        return "w" if self.turn_idx == 0 else "b"
 
     def current(self):
-        return None if self.finished else self._uid(self.turn_side)
+        return None if self.finished else self.players[self.turn_idx]
 
-    def _dirs(self, p):
-        if p.isupper():
-            return [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-        return [(-1, -1), (-1, 1)] if p == "r" else [(1, -1), (1, 1)]
-
-    def _moves_from(self, sq, jumps_only=False):
-        p = self.board[sq]
-        r, c = divmod(sq, 8)
-        out = []
-        for dr, dc in self._dirs(p):
-            r1, c1, r2, c2 = r + dr, c + dc, r + 2 * dr, c + 2 * dc
-            if not (_on(r1, c1) and _on(r2, c2)):
-                continue
-            mid, dst = self.board[r1 * 8 + c1], self.board[r2 * 8 + c2]
-            if mid and mid.lower() != p.lower() and not dst:
-                out.append((r2 * 8 + c2, r1 * 8 + c1))
-            elif not mid and not jumps_only:
-                out.append((r1 * 8 + c1, None))
-        return out
-
-    def legal(self):
-        """dict from -> list of (to, captured_sq|None)"""
-        side = self.turn_side
-        sqs = [self.chain] if self.chain is not None else [i for i, p in enumerate(self.board) if p and p.lower() == side]
-        jumps = {s: self._moves_from(s, True) for s in sqs}
-        jumps = {s: m for s, m in jumps.items() if m}
-        if jumps:
-            return jumps
-        if self.chain is not None:
-            return {}
-        steps = {s: self._moves_from(s) for s in sqs}
-        return {s: m for s, m in steps.items() if m}
+    def moves(self):
+        if self._moves is None:
+            self._moves = legal_moves(self.board, self.side())
+        return self._moves
 
     def handle(self, uid, msg):
         if self.finished:
@@ -80,63 +111,84 @@ class CheckersGame(BaseGame):
             raise GameError("It's not your turn")
         if msg.get("t") != "move":
             raise GameError("Unknown action")
-        f, t = msg.get("from"), msg.get("to")
-        if any(isinstance(x, bool) or not isinstance(x, int) for x in (f, t)):
+        path = msg.get("path")
+        if not isinstance(path, list) or not 2 <= len(path) <= 13:
             raise GameError("Bad move")
-        mv = next((m for m in self.legal().get(f, []) if m[0] == t), None)
-        if mv is None:
-            jumps_exist = any(m[1] is not None for ms in self.legal().values() for m in ms)
-            raise GameError("You must capture!" if jumps_exist else "Illegal move")
-        self._play(f, mv)
+        for v in path:
+            if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < 64:
+                raise GameError("Bad square")
+        for p, cp in self.moves():
+            if p == path:
+                return self._apply(p, cp)
+        raise GameError("Illegal move" + (" (you must capture)" if self.moves() and self.moves()[0][1] else ""))
 
-    def _play(self, f, mv):
-        to, cap = mv
-        p = self.board[f]
-        self.board[f], self.board[to] = "", p
-        kinged = False
-        if cap is not None:
-            self.board[cap] = ""
-        if p.islower() and ((p == "r" and to < 8) or (p == "b" and to >= 56)):
-            self.board[to] = p.upper()
-            kinged = True
+    def _apply(self, path, cp):
+        b = self.board
+        mover = self.current()
+        piece = b[path[0]]
+        b[path[0]] = ""
+        for s in cp:
+            b[s] = ""
+        end = path[-1]
+        crowned = piece.islower() and end // 8 == (0 if piece == "w" else 7)
+        b[end] = piece.upper() if crowned else piece
         self.seq += 1
-        self.idle = 0 if (cap is not None or p.islower()) else self.idle + 1
-        self.last_move = {"seq": self.seq, "uid": self._uid(self.turn_side), "from": f, "to": to, "captured": cap, "king": kinged}
-        if cap is not None and not kinged and self._moves_from(to, True):
-            self.chain = to
-            return
-        self.chain = None
-        self.turn_side = "b" if self.turn_side == "r" else "r"
-        if not self.legal():
-            self.finished, self.winner = True, self._uid("b" if self.turn_side == "r" else "r")
-        elif self.idle >= 80:
-            self.finished = self.draw = True
+        self.plies += 1
+        self.last_move = {"uid": mover, "path": path, "captured": cp, "crowned": crowned, "seq": self.seq}
+        self.quiet = 0 if (cp or piece.islower()) else self.quiet + 1
+        self.turn_idx = 1 - self.turn_idx
+        self._moves = None
+        if not self.moves():
+            self.finished, self.winner, self.reason = True, mover, "no moves left"
+        elif self.quiet >= 80:
+            self.finished, self.draw, self.reason = True, True, "40-move rule"
+        elif self.plies >= self.MAX_PLIES:
+            self.finished, self.draw, self.reason = True, True, "move limit"
 
     def auto_play(self):
         if self.finished:
             return
-        opts = [(f, m) for f, ms in self.legal().items() for m in ms]
-
-        def score(o):
-            f, (t, cap) = o
-            s = self.rng.random()
-            if cap is not None:
-                s += 10
-            if self.board[f].islower() and ((self.turn_side == "r" and t < 8) or (self.turn_side == "b" and t >= 56)):
-                s += 6
-            r, c = divmod(t, 8)
-            s += 1 if c in (0, 7) else 0
-            return s
-        f, mv = max(opts, key=score)
-        self._play(f, mv)
+        ms = self.moves()
+        if not ms:
+            return
+        best, pick = -10 ** 9, []
+        for path, cp in ms:
+            sc = len(cp) * 10
+            end = path[-1]
+            p = self.board[path[0]]
+            if p.islower() and end // 8 == (0 if p == "w" else 7):
+                sc += 8
+            er, ec = divmod(end, 8)
+            if ec in (0, 7):
+                sc += 1
+            if p.islower():
+                sc += (7 - er if p == "w" else er) * 0.3
+            sc += self.rng.random() * 2
+            if sc > best:
+                best, pick = sc, (path, cp)
+        self._apply(*pick)
 
     def remove_player(self, uid):
-        if uid not in self.side or self.finished:
+        if uid not in self.players or self.finished:
             return
-        self.finished, self.winner = True, next(u for u in self.players if u != uid)
+        self.finished, self.reason = True, "resigned"
+        self.winner = next(u for u in self.players if u != uid)
 
     def public_state(self):
-        leg = {} if self.finished else {f: [m[0] for m in ms] for f, ms in self.legal().items()}
-        return {"kind": "checkers", "players": [{"uid": u, "side": self.side[u]} for u in self.players],
-                "board": self.board, "turn": self.current(), "dests": leg, "chain": self.chain,
-                "last_move": self.last_move, "winner": self.winner, "draw": self.draw}
+        legal = {}
+        if not self.finished:
+            for path, _ in self.moves():
+                legal.setdefault(str(path[0]), []).append(path)
+        return {
+            "kind": "checkers",
+            "players": [{"uid": u, "color": c} for u, c in zip(self.players, ("w", "b"))],
+            "board": self.board,
+            "turn": self.current(),
+            "legal": legal,
+            "must_capture": bool(self.moves() and self.moves()[0][1]) if not self.finished else False,
+            "counts": {"w": sum(1 for x in self.board if x.lower() == "w"), "b": sum(1 for x in self.board if x.lower() == "b")},
+            "last_move": self.last_move,
+            "winner": self.winner,
+            "draw": self.draw,
+            "reason": self.reason,
+        }

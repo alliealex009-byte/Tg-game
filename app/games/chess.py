@@ -1,194 +1,309 @@
-"""Chess with full rules: check, checkmate, stalemate, castling, en passant, promotion, repetition, 50-move rule."""
+"""Chess: full legal rules (castling, en passant, promotion, check/mate/stalemate, 50-move, repetition, dead position).
+Squares are 0..63, index = row*8 + col, row 0 is rank 8 (black's back rank). White is players[0]."""
 from __future__ import annotations
 
 import random
 
 from .base import BaseGame, GameError
 
-START = ["bR", "bN", "bB", "bQ", "bK", "bB", "bN", "bR"] + ["bP"] * 8 + [""] * 32 + ["wP"] * 8 + ["wR", "wN", "wB", "wQ", "wK", "wB", "wN", "wR"]
-VAL = {"P": 100, "N": 320, "B": 330, "R": 500, "Q": 900, "K": 0}
-KN = [(-2, -1), (-2, 1), (-1, -2), (-1, 2), (1, -2), (1, 2), (2, -1), (2, 1)]
-KG = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-DIAG = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
-ORTH = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+START = "rnbqkbnrpppppppp" + "." * 32 + "PPPPPPPPRNBQKBNR"
+KN = ((-2, -1), (-2, 1), (-1, -2), (-1, 2), (1, -2), (1, 2), (2, -1), (2, 1))
+KG = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
+DIAG = ((-1, -1), (-1, 1), (1, -1), (1, 1))
+ORTH = ((-1, 0), (1, 0), (0, -1), (0, 1))
+VAL = {"p": 100, "n": 320, "b": 330, "r": 500, "q": 900, "k": 0}
+PROMO = "qrbn"
 
 
-def _on(r, c):
-    return 0 <= r < 8 and 0 <= c < 8
+def is_white(p):
+    return p.isupper()
 
 
-def attacked(b, sq, by):
-    r, c = divmod(sq, 8)
-    d = -1 if by == "w" else 1  # direction a pawn of colour `by` moves (towards rank decreasing for white)
-    for dc in (-1, 1):
-        rr, cc = r - d, c + dc
-        if _on(rr, cc) and b[rr * 8 + cc] == by + "P":
-            return True
-    for dr, dc in KN:
-        rr, cc = r + dr, c + dc
-        if _on(rr, cc) and b[rr * 8 + cc] == by + "N":
-            return True
-    for dr, dc in KG:
-        rr, cc = r + dr, c + dc
-        if _on(rr, cc) and b[rr * 8 + cc] == by + "K":
-            return True
-    for dirs, kinds in ((DIAG, "BQ"), (ORTH, "RQ")):
-        for dr, dc in dirs:
-            rr, cc = r + dr, c + dc
-            while _on(rr, cc):
-                p = b[rr * 8 + cc]
-                if p:
-                    if p[0] == by and p[1] in kinds:
-                        return True
-                    break
-                rr, cc = rr + dr, cc + dc
-    return False
+class Position:
+    __slots__ = ("b", "turn", "castle", "ep", "half", "full")
 
+    def __init__(self, b=None, turn="w", castle="KQkq", ep=-1, half=0, full=1):
+        self.b = list(b if b is not None else START)
+        self.turn, self.castle, self.ep, self.half, self.full = turn, castle, ep, half, full
 
-def king_sq(b, col):
-    return b.index(col + "K")
+    def copy(self):
+        return Position(self.b, self.turn, self.castle, self.ep, self.half, self.full)
 
+    @staticmethod
+    def from_fen(fen):
+        parts = fen.split()
+        rows = parts[0].split("/")
+        b = []
+        for row in rows:
+            for ch in row:
+                b += ["."] * int(ch) if ch.isdigit() else [ch]
+        ep = -1
+        if parts[3] != "-":
+            ep = (8 - int(parts[3][1])) * 8 + "abcdefgh".index(parts[3][0])
+        return Position("".join(b), parts[1], parts[2] if parts[2] != "-" else "", ep,
+                        int(parts[4]) if len(parts) > 4 else 0, int(parts[5]) if len(parts) > 5 else 1)
 
-def pseudo(b, col, ep, castle):
-    """Yield (from, to, promo|None) pseudo-legal moves."""
-    out = []
-    opp = "b" if col == "w" else "w"
-    for sq in range(64):
-        p = b[sq]
-        if not p or p[0] != col:
-            continue
+    # ---- attack detection
+    def attacked(self, sq, by_white):
+        b = self.b
         r, c = divmod(sq, 8)
-        k = p[1]
-        if k == "P":
-            d = -1 if col == "w" else 1
-            start = 6 if col == "w" else 1
-            last = 0 if col == "w" else 7
-            rr = r + d
-            if _on(rr, c) and not b[rr * 8 + c]:
-                if rr == last:
-                    out += [(sq, rr * 8 + c, q) for q in "QRBN"]
-                else:
-                    out.append((sq, rr * 8 + c, None))
-                    if r == start and not b[(r + 2 * d) * 8 + c]:
-                        out.append((sq, (r + 2 * d) * 8 + c, None))
+        pawn, knight, king, bish, rook, queen = (("P", "N", "K", "B", "R", "Q") if by_white else ("p", "n", "k", "b", "r", "q"))
+        pr = r + 1 if by_white else r - 1  # row where an attacking pawn would stand
+        if 0 <= pr < 8:
             for dc in (-1, 1):
-                cc = c + dc
-                if not _on(rr, cc):
-                    continue
-                t = rr * 8 + cc
-                if b[t] and b[t][0] == opp or t == ep:
-                    if rr == last:
-                        out += [(sq, t, q) for q in "QRBN"]
-                    else:
-                        out.append((sq, t, None))
-        elif k in "NK":
-            for dr, dc in (KN if k == "N" else KG):
-                rr, cc = r + dr, c + dc
-                if _on(rr, cc) and (not b[rr * 8 + cc] or b[rr * 8 + cc][0] == opp):
-                    out.append((sq, rr * 8 + cc, None))
-            if k == "K":
-                home = 60 if col == "w" else 4
-                if sq == home and not attacked(b, home, opp):
-                    if castle.get(col + "K") and not b[home + 1] and not b[home + 2] and b[home + 3] == col + "R" \
-                            and not attacked(b, home + 1, opp) and not attacked(b, home + 2, opp):
-                        out.append((sq, home + 2, None))
-                    if castle.get(col + "Q") and not b[home - 1] and not b[home - 2] and not b[home - 3] and b[home - 4] == col + "R" \
-                            and not attacked(b, home - 1, opp) and not attacked(b, home - 2, opp):
-                        out.append((sq, home - 2, None))
-        else:
-            dirs = DIAG if k == "B" else ORTH if k == "R" else DIAG + ORTH
+                if 0 <= c + dc < 8 and b[pr * 8 + c + dc] == pawn:
+                    return True
+        for dr, dc in KN:
+            rr, cc = r + dr, c + dc
+            if 0 <= rr < 8 and 0 <= cc < 8 and b[rr * 8 + cc] == knight:
+                return True
+        for dr, dc in KG:
+            rr, cc = r + dr, c + dc
+            if 0 <= rr < 8 and 0 <= cc < 8 and b[rr * 8 + cc] == king:
+                return True
+        for dirs, pieces in ((DIAG, (bish, queen)), (ORTH, (rook, queen))):
             for dr, dc in dirs:
                 rr, cc = r + dr, c + dc
-                while _on(rr, cc):
-                    t = b[rr * 8 + cc]
-                    if not t:
-                        out.append((sq, rr * 8 + cc, None))
-                    else:
-                        if t[0] == opp:
-                            out.append((sq, rr * 8 + cc, None))
+                while 0 <= rr < 8 and 0 <= cc < 8:
+                    p = b[rr * 8 + cc]
+                    if p != ".":
+                        if p in pieces:
+                            return True
                         break
-                    rr, cc = rr + dr, cc + dc
-    return out
+                    rr += dr
+                    cc += dc
+        return False
 
+    def king_sq(self, white):
+        return self.b.index("K" if white else "k")
 
-def make(b, mv, ep, castle):
-    """Return (new_board, new_ep, new_castle, captured_piece, flags)."""
-    frm, to, promo = mv
-    nb = b[:]
-    p = nb[frm]
-    col, kind = p[0], p[1]
-    cap = nb[to]
-    flags = []
-    if kind == "P" and to == ep and not cap:
-        capsq = to + (8 if col == "w" else -8)
-        cap = nb[capsq]
-        nb[capsq] = ""
-        flags.append("ep")
-    nb[to], nb[frm] = p, ""
-    if promo:
-        nb[to] = col + promo
-        flags.append("promo")
-    if kind == "K" and abs(to - frm) == 2:
-        if to > frm:
-            nb[frm + 1], nb[frm + 3] = nb[frm + 3], ""
+    def in_check(self, white=None):
+        w = (self.turn == "w") if white is None else white
+        return self.attacked(self.king_sq(w), not w)
+
+    # ---- generation
+    def pseudo(self):
+        b, w = self.b, self.turn == "w"
+        out = []
+        for sq in range(64):
+            p = b[sq]
+            if p == "." or is_white(p) != w:
+                continue
+            r, c = divmod(sq, 8)
+            k = p.lower()
+            if k == "p":
+                d = -1 if w else 1
+                start, last = (6, 0) if w else (1, 7)
+                r1 = r + d
+                if 0 <= r1 < 8:
+                    if b[r1 * 8 + c] == ".":
+                        self._pawn_add(out, sq, r1 * 8 + c, r1 == last)
+                        if r == start and b[(r + 2 * d) * 8 + c] == ".":
+                            out.append((sq, (r + 2 * d) * 8 + c, ""))
+                    for dc in (-1, 1):
+                        cc = c + dc
+                        if 0 <= cc < 8:
+                            t = r1 * 8 + cc
+                            if b[t] != "." and is_white(b[t]) != w:
+                                self._pawn_add(out, sq, t, r1 == last)
+                            elif t == self.ep:
+                                out.append((sq, t, ""))
+            elif k in "nk":
+                for dr, dc in (KN if k == "n" else KG):
+                    rr, cc = r + dr, c + dc
+                    if 0 <= rr < 8 and 0 <= cc < 8:
+                        t = rr * 8 + cc
+                        if b[t] == "." or is_white(b[t]) != w:
+                            out.append((sq, t, ""))
+                if k == "k":
+                    self._castles(out, sq, w)
+            else:
+                dirs = DIAG if k == "b" else ORTH if k == "r" else DIAG + ORTH
+                for dr, dc in dirs:
+                    rr, cc = r + dr, c + dc
+                    while 0 <= rr < 8 and 0 <= cc < 8:
+                        t = rr * 8 + cc
+                        if b[t] == ".":
+                            out.append((sq, t, ""))
+                        else:
+                            if is_white(b[t]) != w:
+                                out.append((sq, t, ""))
+                            break
+                        rr += dr
+                        cc += dc
+        return out
+
+    @staticmethod
+    def _pawn_add(out, f, t, promo):
+        if promo:
+            out += [(f, t, x) for x in PROMO]
         else:
-            nb[frm - 1], nb[frm - 4] = nb[frm - 4], ""
-        flags.append("castle")
-    nep = (frm + to) // 2 if kind == "P" and abs(to - frm) == 16 else None
-    nc = dict(castle)
-    if kind == "K":
-        nc[col + "K"] = nc[col + "Q"] = False
-    for sq, key in ((56, "wQ"), (63, "wK"), (0, "bQ"), (7, "bK")):
-        if frm == sq or to == sq:
-            nc[key] = False
-    return nb, nep, nc, cap, flags
+            out.append((f, t, ""))
+
+    def _castles(self, out, sq, w):
+        b = self.b
+        home = 60 if w else 4
+        if sq != home or self.in_check(w):
+            return
+        rk = "R" if w else "r"
+        if ("K" if w else "k") in self.castle and b[home + 1] == "." and b[home + 2] == "." and b[home + 3] == rk \
+                and not self.attacked(home + 1, not w) and not self.attacked(home + 2, not w):
+            out.append((sq, home + 2, ""))
+        if ("Q" if w else "q") in self.castle and b[home - 1] == "." and b[home - 2] == "." and b[home - 3] == "." \
+                and b[home - 4] == rk and not self.attacked(home - 1, not w) and not self.attacked(home - 2, not w):
+            out.append((sq, home - 2, ""))
+
+    def make(self, m):
+        f, t, promo = m
+        n = self.copy()
+        b = n.b
+        p = b[f]
+        k = p.lower()
+        w = p.isupper()
+        cap = b[t] != "."
+        b[t], b[f] = p, "."
+        if k == "p":
+            if t == self.ep and not cap:
+                b[t + (8 if w else -8)] = "."
+                cap = True
+            if promo:
+                b[t] = promo.upper() if w else promo
+        if k == "k" and abs(t - f) == 2:
+            if t > f:
+                b[f + 1], b[f + 3] = b[f + 3], "."
+            else:
+                b[f - 1], b[f - 4] = b[f - 4], "."
+        cr = n.castle
+        for sq, ch in ((60, "KQ"), (4, "kq"), (63, "K"), (56, "Q"), (7, "k"), (0, "q")):
+            if f == sq or t == sq:
+                for x in ch:
+                    cr = cr.replace(x, "")
+        n.castle = cr
+        n.ep = -1
+        if k == "p" and abs(t - f) == 16:
+            mid = (t + f) // 2
+            enemy = "p" if w else "P"
+            r, c = divmod(t, 8)
+            if any(0 <= c + dc < 8 and b[r * 8 + c + dc] == enemy for dc in (-1, 1)):
+                n.ep = mid
+        n.half = 0 if (k == "p" or cap) else self.half + 1
+        if self.turn == "b":
+            n.full += 1
+        n.turn = "b" if self.turn == "w" else "w"
+        return n
+
+    def legal(self):
+        w = self.turn == "w"
+        out = []
+        for m in self.pseudo():
+            n = self.make(m)
+            if not n.attacked(n.king_sq(w), not w):
+                out.append(m)
+        return out
+
+    def key(self):
+        return ("".join(self.b), self.turn, self.castle, self.ep)
+
+    def insufficient(self):
+        pcs = [p for p in self.b if p != "." and p.lower() != "k"]
+        if not pcs:
+            return True
+        if any(p.lower() in "prq" for p in pcs):
+            return False
+        if len(pcs) == 1:
+            return True
+        if all(p.lower() == "b" for p in pcs):  # only bishops: dead if all on one colour
+            cols = {(i // 8 + i % 8) % 2 for i, p in enumerate(self.b) if p.lower() == "b"}
+            return len(cols) == 1
+        return False
+
+
+def perft(pos, depth):
+    if depth == 0:
+        return 1
+    ms = pos.legal()
+    if depth == 1:
+        return len(ms)
+    return sum(perft(pos.make(m), depth - 1) for m in ms)
+
+
+def sq_name(i):
+    return "abcdefgh"[i % 8] + str(8 - i // 8)
+
+
+# ---- tiny evaluation for the computer player
+CENTER = [0, 0, 0, 0, 0, 0, 0, 0,
+          0, 1, 1, 1, 1, 1, 1, 0,
+          0, 1, 2, 2, 2, 2, 1, 0,
+          0, 1, 2, 3, 3, 2, 1, 0,
+          0, 1, 2, 3, 3, 2, 1, 0,
+          0, 1, 2, 2, 2, 2, 1, 0,
+          0, 1, 1, 1, 1, 1, 1, 0,
+          0, 0, 0, 0, 0, 0, 0, 0]
+
+
+def evaluate(pos):
+    """Score from the side-to-move's point of view."""
+    s = 0
+    for i, p in enumerate(pos.b):
+        if p == ".":
+            continue
+        k = p.lower()
+        v = VAL[k] + (CENTER[i] * 6 if k in "nbpq" else 0)
+        if k == "p":
+            r = i // 8
+            v += (6 - r if p == "P" else r - 1) * 4
+        s += v if p.isupper() else -v
+    return s if pos.turn == "w" else -s
+
+
+def search(pos, depth, alpha, beta):
+    ms = pos.legal()
+    if not ms:
+        return (-100000 - depth) if pos.in_check() else 0
+    if depth == 0:
+        return evaluate(pos)
+    best = -10 ** 9
+    # captures first for better pruning
+    ms.sort(key=lambda m: pos.b[m[1]] != ".", reverse=True)
+    for m in ms:
+        v = -search(pos.make(m), depth - 1, -beta, -alpha)
+        if v > best:
+            best = v
+        alpha = max(alpha, v)
+        if alpha >= beta:
+            break
+    return best
 
 
 class ChessGame(BaseGame):
     name = "chess"
-    min_players = max_players = 2
+    min_players = 2
+    max_players = 2
+    ai_depth = 2
+    MAX_PLIES = 400
 
     def __init__(self, players, rng=None):
         if len(players) != 2:
             raise ValueError("Chess needs exactly 2 players")
         self.rng = rng or random.SystemRandom()
         self.players = list(players)
-        self.color = {self.players[0]: "w", self.players[1]: "b"}
-        self.board = START[:]
-        self.turn_col = "w"
-        self.ep = None
-        self.castle = {"wK": True, "wQ": True, "bK": True, "bQ": True}
-        self.half = 0
-        self.seen = {}
-        self.captured = {"w": [], "b": []}  # pieces captured BY that colour
+        self.pos = Position()
+        self.winner = None
+        self.finished = False
+        self.draw = False
+        self.reason = None
         self.seq = 0
         self.last_move = None
-        self.reason = ""
-        self.winner, self.finished, self.draw = None, False, False
-        self._note()
-
-    def _uid(self, col):
-        return next(u for u in self.players if self.color[u] == col)
+        self.plies = 0
+        self.reps = {self.pos.key(): 1}
+        self.captured = {"w": [], "b": []}  # pieces captured BY that colour
 
     def current(self):
-        return None if self.finished else self._uid(self.turn_col)
+        return None if self.finished else self.players[0 if self.pos.turn == "w" else 1]
 
-    def legal(self, col=None):
-        col = col or self.turn_col
-        opp = "b" if col == "w" else "w"
-        res = []
-        for mv in pseudo(self.board, col, self.ep, self.castle):
-            nb, *_ = make(self.board, mv, self.ep, self.castle)
-            if not attacked(nb, king_sq(nb, col), opp):
-                res.append(mv)
-        return res
-
-    def _key(self):
-        return (tuple(self.board), self.turn_col, self.ep, tuple(sorted(self.castle.items())))
-
-    def _note(self):
-        k = self._key()
-        self.seen[k] = self.seen.get(k, 0) + 1
+    def legal_moves(self):
+        return [] if self.finished else self.pos.legal()
 
     def handle(self, uid, msg):
         if self.finished:
@@ -197,93 +312,122 @@ class ChessGame(BaseGame):
             raise GameError("It's not your turn")
         if msg.get("t") != "move":
             raise GameError("Unknown action")
-        f, t, pr = msg.get("from"), msg.get("to"), msg.get("promo") or None
-        if any(isinstance(x, bool) or not isinstance(x, int) for x in (f, t)):
-            raise GameError("Bad move")
-        cands = [m for m in self.legal() if m[0] == f and m[1] == t]
-        if not cands:
+        f, t, promo = msg.get("from"), msg.get("to"), msg.get("promo", "q")
+        for v in (f, t):
+            if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < 64:
+                raise GameError("Bad square")
+        if not isinstance(promo, str):
+            raise GameError("Bad promotion")
+        promo = promo.lower() or "q"
+        if promo not in PROMO:
+            raise GameError("Bad promotion piece")
+        p = self.pos.b[f]
+        is_promo = p != "." and p.lower() == "p" and (t < 8 or t >= 56)
+        m = (f, t, promo if is_promo else "")
+        if m not in self.pos.legal():
             raise GameError("Illegal move")
-        if len(cands) > 1:  # promotion
-            pr = pr if pr in ("Q", "R", "B", "N") else "Q"
-            cands = [m for m in cands if m[2] == pr]
-        self._play(cands[0])
+        self._apply(m)
 
-    def _play(self, mv):
-        col = self.turn_col
-        opp = "b" if col == "w" else "w"
-        piece = self.board[mv[0]]
-        nb, nep, nc, cap, flags = make(self.board, mv, self.ep, self.castle)
-        self.half = 0 if (cap or piece[1] == "P") else self.half + 1
-        self.board, self.ep, self.castle = nb, nep, nc
-        if cap:
-            self.captured[col].append(cap)
-        self.turn_col = opp
+    def _apply(self, m):
+        pos = self.pos
+        mover = self.current()
+        f, t, promo = m
+        piece = pos.b[f]
+        target = pos.b[t]
+        ep_cap = piece.lower() == "p" and t == pos.ep and target == "."
+        captured = target if target != "." else ("p" if piece == "P" else "P") if ep_cap else None
+        castle = piece.lower() == "k" and abs(t - f) == 2
+        side = pos.turn
+        if captured:
+            self.captured[side].append(captured)
+        self.pos = pos.make(m)
+        self.plies += 1
         self.seq += 1
-        legal = self.legal()
-        chk = attacked(self.board, king_sq(self.board, opp), col)
-        self.last_move = {"seq": self.seq, "uid": self._uid(col), "from": mv[0], "to": mv[1], "piece": piece,
-                          "captured": cap or None, "promo": mv[2], "flags": flags, "check": chk}
-        self._note()
+        n = self.pos
+        check = n.in_check()
+        legal = n.legal()
+        self.last_move = {"uid": mover, "from": f, "to": t, "promo": promo, "piece": piece, "capture": captured,
+                          "ep": ep_cap, "castle": castle, "check": check, "san": self._san(pos, m, check, not legal), "seq": self.seq}
+        k = n.key()
+        self.reps[k] = self.reps.get(k, 0) + 1
         if not legal:
             self.finished = True
-            if chk:
-                self.winner, self.reason = self._uid(col), "checkmate"
+            if check:
+                self.winner, self.reason = mover, "checkmate"
             else:
                 self.draw, self.reason = True, "stalemate"
-        elif self.half >= 100:
-            self.finished, self.draw, self.reason = True, True, "50-move rule"
-        elif self.seen[self._key()] >= 3:
-            self.finished, self.draw, self.reason = True, True, "threefold repetition"
-        elif self._insufficient():
+        elif n.insufficient():
             self.finished, self.draw, self.reason = True, True, "insufficient material"
+        elif n.half >= 100:
+            self.finished, self.draw, self.reason = True, True, "50-move rule"
+        elif self.reps[k] >= 3:
+            self.finished, self.draw, self.reason = True, True, "threefold repetition"
+        elif self.plies >= self.MAX_PLIES:
+            self.finished, self.draw, self.reason = True, True, "move limit"
 
-    def _insufficient(self):
-        rest = [p for p in self.board if p and p[1] != "K"]
-        if not rest:
-            return True
-        return len(rest) == 1 and rest[0][1] in "BN"
+    @staticmethod
+    def _san(pos, m, check, mate):
+        f, t, promo = m
+        p = pos.b[f]
+        if p.lower() == "k" and abs(t - f) == 2:
+            s = "O-O" if t > f else "O-O-O"
+        else:
+            cap = pos.b[t] != "." or (p.lower() == "p" and t == pos.ep)
+            s = ("" if p.lower() == "p" else p.upper()) + (sq_name(f)[0] if p.lower() == "p" and cap else "") + ("x" if cap else "") + sq_name(t)
+            if promo:
+                s += "=" + promo.upper()
+        return s + ("#" if mate else "+" if check else "")
 
-    def _score(self, mv):
-        b = self.board
-        s = self.rng.random() * 30
-        tgt = b[mv[1]]
-        if tgt:
-            s += VAL[tgt[1]] * 10 - VAL[b[mv[0]][1]]
-        if mv[2]:
-            s += 800
-        nb, nep, nc, cap, fl = make(b, mv, self.ep, self.castle)
-        col = self.turn_col
-        opp = "b" if col == "w" else "w"
-        if attacked(nb, king_sq(nb, opp), col):
-            s += 60
-        if attacked(nb, mv[1], opp):  # moving onto an attacked square
-            s -= VAL[b[mv[0]][1]] * 0.9
-        r, c = divmod(mv[1], 8)
-        s += (3.5 - abs(3.5 - r)) * 4 + (3.5 - abs(3.5 - c)) * 4 if b[mv[0]][1] in "NBP" else 0
-        return s
+    # ---- computer player
+    def pick(self):
+        ms = self.pos.legal()
+        if not ms:
+            return None
+        if self.ai_depth <= 0:
+            return self.rng.choice(ms)
+        best, scored = -10 ** 9, []
+        for m in ms:
+            v = -search(self.pos.make(m), self.ai_depth - 1, -10 ** 9, 10 ** 9)
+            v += self.rng.random() * 6  # variety
+            scored.append((v, m))
+            best = max(best, v)
+        return max(scored)[1]
 
     def auto_play(self):
         if self.finished:
             return
-        mvs = self.legal()
-        self._play(max(mvs, key=self._score))
+        m = self.pick()
+        if m is None:
+            return
+        self._apply(m)
 
     def remove_player(self, uid):
-        if uid not in self.color or self.finished:
+        if uid not in self.players or self.finished:
             return
-        self.finished, self.winner, self.reason = True, next(u for u in self.players if u != uid), "resigned"
+        self.finished = True
+        self.reason = "resigned"
+        self.winner = next(u for u in self.players if u != uid)
 
     def public_state(self):
-        cur = self.current()
-        dests = {}
+        pos = self.pos
+        legal = {}
         if not self.finished:
-            for f, t, p in self.legal():
-                dests.setdefault(f, [])
-                if t not in dests[f]:
-                    dests[f].append(t)
+            for f, t, p in pos.legal():
+                legal.setdefault(f, [])
+                if t not in legal[f]:
+                    legal[f].append(t)
         return {
-            "kind": "chess", "players": [{"uid": u, "color": self.color[u]} for u in self.players],
-            "board": self.board, "turn": cur, "dests": dests, "last_move": self.last_move,
-            "in_check": (not self.finished or self.reason == "checkmate") and attacked(self.board, king_sq(self.board, self.turn_col), "b" if self.turn_col == "w" else "w"),
-            "captured": self.captured, "reason": self.reason, "winner": self.winner, "draw": self.draw,
+            "kind": "chess",
+            "players": [{"uid": u, "color": c} for u, c in zip(self.players, ("w", "b"))],
+            "board": "".join(pos.b),
+            "turn": self.current(),
+            "side": pos.turn,
+            "legal": {str(k): v for k, v in legal.items()},
+            "in_check": (pos.king_sq(pos.turn == "w") if (not self.finished or self.reason == "checkmate") and pos.in_check() else None),
+            "captured": self.captured,
+            "last_move": self.last_move,
+            "winner": self.winner,
+            "draw": self.draw,
+            "reason": self.reason,
+            "plies": self.plies,
         }
