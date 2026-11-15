@@ -137,20 +137,36 @@
   /* dice tumble: cycles random faces with a spin, then settles on the real value */
   async function tumble(el, value, ms) {
     if (!el) return;
-    ms = ms || 650;
+    ms = ms || 900;
     sfx.roll();
-    el.classList.add("rolling");
+    el.innerHTML = diceHTML(1 + Math.floor(Math.random() * 6));
+    const d = el.querySelector(".dice");
+    if (!d) return;
+    el.style.perspective = "260px";
+    const pips = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
+    const face = (v) => d.querySelectorAll("i").forEach((e, i) => e.classList.toggle("on", pips[v].includes(i)));
+    let anim = null;
+    try {
+      anim = d.animate([
+        { transform: "translateY(0) rotateX(0) rotateY(0) rotateZ(0) scale(1)" },
+        { transform: "translateY(-30%) rotateX(300deg) rotateY(160deg) rotateZ(80deg) scale(1.2)", offset: 0.33 },
+        { transform: "translateY(0) rotateX(640deg) rotateY(340deg) rotateZ(200deg) scale(.96)", offset: 0.66 },
+        { transform: "translateY(-8%) rotateX(900deg) rotateY(520deg) rotateZ(330deg) scale(1.06)", offset: 0.86 },
+        { transform: "translateY(0) rotateX(1080deg) rotateY(720deg) rotateZ(360deg) scale(1)" },
+      ], { duration: ms, easing: "cubic-bezier(.22,.7,.3,1)" });
+    } catch (e) { /* no WAAPI: faces still change */ }
     const t0 = performance.now();
-    let last = 0;
-    while (performance.now() - t0 < ms) {
-      const f = 1 + Math.floor(Math.random() * 6);
-      el.innerHTML = diceHTML(f === last ? (f % 6) + 1 : f); last = f;
-      await sleep(70);
+    let wait = 40, last = 0;
+    while (performance.now() - t0 < ms - 140) {
+      let f = 1 + Math.floor(Math.random() * 6);
+      if (f === last) f = (f % 6) + 1;
+      last = f; face(f);
+      await sleep(wait); wait = Math.min(wait * 1.2, 160);
     }
-    el.innerHTML = diceHTML(value);
-    el.classList.remove("rolling");
-    el.classList.add("settle");
-    setTimeout(() => el.classList.remove("settle"), 300);
+    face(value);
+    if (anim) { try { await anim.finished; } catch (e) { /* cancelled */ } }
+    el.style.perspective = "";
+    d.animate([{ transform: "scale(1.18)" }, { transform: "scale(.96)" }, { transform: "scale(1)" }], { duration: 220, easing: "ease-out" });
   }
 
   /* confetti burst */
@@ -582,7 +598,7 @@
         renderTokens(); updateLudoPanels(s);
         const seat = (g.players.find((p) => p.uid === g.last_roll.uid) || {}).seat;
         const dbx = ui.panelEls[seat] && ui.panelEls[seat].querySelector(".dicebox");
-        await tumble(dbx, g.last_roll.value, 650);
+        await tumble(dbx, g.last_roll.value, 900);
         await sleep(120);
       }
       if (g.last_move && g.last_move.seq > ui.lastMoveSeq) {

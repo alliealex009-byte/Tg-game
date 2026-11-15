@@ -171,7 +171,7 @@
         ui.lastRollSeq = g.last_roll.seq; ui.dice = g.last_roll.value;
         ui.note = (g.last_roll.uid === s.you ? "You" : nameOf(s, g.last_roll.uid)) + " rolled " + g.last_roll.value;
         showSlDice(ui, s);
-        await HUB.tumble($("#sldice"), g.last_roll.value, 650);
+        await HUB.tumble($("#sldice"), g.last_roll.value, 900);
         await HUB.sleep(100);
       }
       if (g.last_move && g.last_move.seq > ui.lastMoveSeq) { ui.lastMoveSeq = g.last_move.seq; await slMove(ui, s, g.last_move); }
@@ -473,6 +473,7 @@
     turnFx(ui, s);
   }
 
+  HUB.kit = { bar, updateBar, nameOf, setHint, turnHint, turnFx, shell, newUI, iAmPlaying, PCOL };
   HUB.UI.snakes = { build: buildSnakes, apply: applySnakes };
   HUB.UI.connect4 = { build: buildC4, apply: applyC4 };
   HUB.UI.rps = { build: buildRPS, apply: applyRPS };
