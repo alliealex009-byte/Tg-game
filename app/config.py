@@ -28,6 +28,11 @@ class Settings:
     daily_bonus: int = 200
     rake_percent: int = 10        # % of the pot kept by the house (coin sink)
     turn_seconds: int = 20
+    owner_name: str = "AAKASH"
+    owner_username: str = "Advik_prakashh"
+    sister_bot: str = "Groupingabot"
+    referral_bonus: int = 300
+    bot_delay: tuple = (0.9, 1.6)  # seconds a computer player "thinks"
     dev_mode: bool = False        # allows browser testing without Telegram. NEVER enable in production.
 
 
@@ -43,5 +48,10 @@ def load_settings() -> Settings:
         daily_bonus=int(e("DAILY_BONUS", "200")),
         rake_percent=max(0, min(50, int(e("RAKE_PERCENT", "10")))),
         turn_seconds=max(8, int(e("TURN_SECONDS", "20"))),
+        owner_name=e("OWNER_NAME", "AAKASH").strip(),
+        owner_username=e("OWNER_USERNAME", "Advik_prakashh").strip().lstrip("@"),
+        sister_bot=e("SISTER_BOT", "Groupingabot").strip().lstrip("@"),
+        referral_bonus=int(e("REFERRAL_BONUS", "300")),
+        bot_delay=(float(e("BOT_DELAY_MIN", "0.9")), float(e("BOT_DELAY_MAX", "1.6"))),
         dev_mode=_bool(e("DEV_MODE", "0")),
     )

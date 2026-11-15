@@ -49,8 +49,78 @@ class DB:
         self.c.execute("PRAGMA journal_mode=WAL")
         self.c.execute("PRAGMA synchronous=NORMAL")
         self.c.executescript(SCHEMA)
+        self._migrate()
         self.starting_coins = starting_coins
         self.daily_bonus = daily_bonus
+
+    def _migrate(self):
+        cols = {r["name"] for r in self.c.execute("PRAGMA table_info(users)")}
+        for name, ddl in (
+            ("banned", "INTEGER NOT NULL DEFAULT 0"),
+            ("streak", "INTEGER NOT NULL DEFAULT 0"),
+            ("referrer", "INTEGER"),
+            ("refs", "INTEGER NOT NULL DEFAULT 0"),
+            ("verified", "INTEGER NOT NULL DEFAULT 0"),
+            ("dm_ok", "INTEGER NOT NULL DEFAULT 1"),
+        ):
+            if name not in cols:
+                self.c.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+        self.c.executescript(
+            "CREATE TABLE IF NOT EXISTS chats(id INTEGER PRIMARY KEY, title TEXT, type TEXT, active INTEGER NOT NULL DEFAULT 1, added REAL NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);"
+        )
+
+    # ---------- bot admin helpers ----------
+    def kv_get(self, k, default=None):
+        r = self.c.execute("SELECT v FROM kv WHERE k=?", (k,)).fetchone()
+        return r["v"] if r else default
+
+    def kv_set(self, k, v):
+        self.c.execute("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", (k, str(v)))
+
+    def set_ban(self, uid: int, banned: bool) -> bool:
+        cur = self.c.execute("UPDATE users SET banned=? WHERE id=?", (1 if banned else 0, uid))
+        return cur.rowcount > 0
+
+    def is_banned(self, uid: int) -> bool:
+        r = self.c.execute("SELECT banned FROM users WHERE id=?", (uid,)).fetchone()
+        return bool(r and r["banned"])
+
+    def set_verified(self, uid: int):
+        self.c.execute("UPDATE users SET verified=1 WHERE id=?", (uid,))
+
+    def mark_dm(self, uid: int, ok: bool):
+        self.c.execute("UPDATE users SET dm_ok=? WHERE id=?", (1 if ok else 0, uid))
+
+    def user_ids(self, only_dm_ok: bool = True):
+        q = "SELECT id FROM users WHERE banned=0" + (" AND dm_ok=1" if only_dm_ok else "")
+        return [r["id"] for r in self.c.execute(q)]
+
+    def upsert_chat(self, cid: int, title: str, ctype: str, active: bool = True):
+        self.c.execute(
+            "INSERT INTO chats(id,title,type,active,added) VALUES(?,?,?,?,?) "
+            "ON CONFLICT(id) DO UPDATE SET title=excluded.title, type=excluded.type, active=excluded.active",
+            (cid, title, ctype, 1 if active else 0, time.time()),
+        )
+
+    def chat_ids(self):
+        return [r["id"] for r in self.c.execute("SELECT id FROM chats WHERE active=1")]
+
+    def set_chat_active(self, cid: int, active: bool):
+        self.c.execute("UPDATE chats SET active=? WHERE id=?", (1 if active else 0, cid))
+
+    def set_referrer(self, uid: int, ref: int, bonus: int) -> bool:
+        """Credit a referral once, only for a brand-new user who isn't referring themselves."""
+        if uid == ref:
+            return False
+        u, r = self.get_user(uid), self.get_user(ref)
+        if not u or not r or u["referrer"] is not None or u["games"] > 0:
+            return False
+        self.c.execute("UPDATE users SET referrer=? WHERE id=?", (ref, uid))
+        self.c.execute("UPDATE users SET refs=refs+1 WHERE id=?", (ref,))
+        self.add_coins(ref, bonus, f"referral:{uid}")
+        self.add_coins(uid, bonus // 2, f"referred:{ref}")
+        return True
 
     # ---------- users ----------
     def get_user(self, uid: int):
@@ -119,10 +189,13 @@ class DB:
         wait = u["last_daily"] + 86400 - now
         if wait > 0:
             return False, u["coins"], int(wait)
+        streak = u["streak"] + 1 if u["last_daily"] and now - u["last_daily"] < 2 * 86400 else 1
+        bonus = self.daily_bonus + min(streak - 1, 6) * 50  # +50 per streak day, up to +300
         self.c.execute(
-            "UPDATE users SET last_daily=?, coins = coins + ? WHERE id=?", (now, self.daily_bonus, uid)
+            "UPDATE users SET last_daily=?, streak=?, coins = coins + ? WHERE id=?", (now, streak, bonus, uid)
         )
-        self._tx(uid, self.daily_bonus, "daily")
+        self._tx(uid, bonus, "daily")
+        self.last_bonus = bonus
         return True, self.get_user(uid)["coins"], 0
 
     def daily_wait(self, uid: int) -> int:
@@ -130,11 +203,12 @@ class DB:
         return max(0, int(u["last_daily"] + 86400 - time.time()))
 
     # ---------- results ----------
-    def record_result(self, game, room, bet, human_uids, winner, prize):
+    def record_result(self, game, room, bet, human_uids, winner, prize, winners=None):
         for u in human_uids:
             self.c.execute("UPDATE users SET games = games + 1 WHERE id=?", (u,))
-        if winner is not None and winner > 0:
-            self.c.execute("UPDATE users SET wins = wins + 1 WHERE id=?", (winner,))
+        for w in (winners if winners else ([winner] if winner is not None and winner > 0 else [])):
+            if w and w > 0:
+                self.c.execute("UPDATE users SET wins = wins + 1 WHERE id=?", (w,))
         self.c.execute(
             "INSERT INTO matches(game,room,bet,players,winner,prize,ts) VALUES(?,?,?,?,?,?,?)",
             (game, room, bet, json.dumps(list(human_uids)), winner, prize, time.time()),
@@ -154,4 +228,7 @@ class DB:
             "users": q("SELECT COUNT(*) FROM users"),
             "matches": q("SELECT COUNT(*) FROM matches"),
             "coins_in_circulation": q("SELECT COALESCE(SUM(coins),0) FROM users"),
+            "chats": q("SELECT COUNT(*) FROM chats WHERE active=1"),
+            "banned": q("SELECT COUNT(*) FROM users WHERE banned=1"),
+            "new_today": q("SELECT COUNT(*) FROM users WHERE created > strftime('%s','now') - 86400"),
         }

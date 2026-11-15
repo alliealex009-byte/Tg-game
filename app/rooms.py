@@ -80,7 +80,7 @@ class Room:
             "status": self.status, "bet": self.bet, "host": self.host_id(),
             "min_players": self.min_players, "max_players": self.max_players,
             "players": [p.public(bool(self.conns.get(p.uid)), p.uid in self.left) for p in self.players],
-            "game": self.game.public_state() if self.game else None,
+            "game": self.game.view(you) if self.game else None,
             "time_left": tl, "turn_seconds": self.turn_seconds, "result": self.result,
         }
 
@@ -104,7 +104,7 @@ class RoomManager:
         code = secrets.token_hex(4).upper()
         while code in self.rooms:
             code = secrets.token_hex(4).upper()
-        room = Room(code, game_type, creator_id, bet, self.s.turn_seconds)
+        room = Room(code, game_type, creator_id, bet, GAME_INFO[game_type].get("turn", self.s.turn_seconds))
         self.rooms[code] = room
         return room
 
@@ -320,22 +320,31 @@ class RoomManager:
         room.deadline = None
         humans = [p.uid for p in room.humans()]
         winner = g.winner if (g.winner is not None and g.winner > 0) else None
-        pot, rake, prize = room.pot, 0, 0
+        wl = [w for w in (g.winners or []) if w in humans]
+        if wl:
+            winner = wl[0]
+        elif winner is not None:
+            wl = [winner]
+        pot, rake, prize, share = room.pot, 0, 0, 0
         if room.bet and pot:
-            if winner is None:  # draw / nobody to pay: refund everyone
+            if not wl:  # draw / nobody to pay: refund everyone
                 for u in humans:
                     self.db.add_coins(u, room.bet, f"refund:{room.code}")
             else:
                 rake = pot * self.s.rake_percent // 100
                 prize = pot - rake
-                self.db.add_coins(winner, prize, f"win:{room.code}")
+                share = prize // len(wl)
+                for w in wl:
+                    self.db.add_coins(w, share, f"win:{room.code}")
+                prize = share * len(wl)
         room.pot = 0
-        self.db.record_result(room.game_type, room.code, room.bet, humans, winner, prize)
+        self.db.record_result(room.game_type, room.code, room.bet, humans, winner, prize, wl if len(wl) > 1 else None)
         for p in room.humans():
             u = self.db.get_user(p.uid)
             if u:
                 p.coins = u["coins"]
-        room.result = {"winner": g.winner, "draw": bool(g.draw), "pot": pot, "rake": rake, "prize": prize}
+        room.result = {"winner": g.winner, "draw": bool(g.draw), "pot": pot, "rake": rake, "prize": share or prize,
+                       "winners": wl if len(wl) > 1 else None, "share": share}
 
     # ---------- timers ----------
     def _cancel_timer(self, room):
@@ -354,7 +363,7 @@ class RoomManager:
         if p is None:
             return
         if p.is_bot:
-            delay, room.deadline = random.uniform(0.9, 1.6), None
+            delay, room.deadline = random.uniform(*self.s.bot_delay), None
         elif p.afk:
             delay, room.deadline = 1.0, None
         else:

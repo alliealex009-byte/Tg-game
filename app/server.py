@@ -84,7 +84,10 @@ def auth_user(request: Request) -> dict:
         tg = user_from_init_data(request.headers.get("x-init-data", ""), settings)
     except AuthError as e:
         raise HTTPException(status_code=401, detail=str(e))
-    return db.upsert_user(tg["id"], tg["name"], tg["username"], tg["photo"])
+    u = db.upsert_user(tg["id"], tg["name"], tg["username"], tg["photo"])
+    if u.get("banned"):
+        raise HTTPException(status_code=403, detail="Your account is banned")
+    return u
 
 
 @app.get("/healthz")
@@ -102,6 +105,8 @@ async def config():
         "daily": settings.daily_bonus,
         "rake": settings.rake_percent,
         "dev": settings.dev_mode,
+        "owner": {"name": settings.owner_name, "username": settings.owner_username},
+        "sister": settings.sister_bot,
     }
 
 
@@ -115,7 +120,7 @@ async def me(request: Request):
 async def daily(request: Request):
     u = auth_user(request)
     ok, coins, wait = db.claim_daily(u["id"])
-    return {"claimed": ok, "coins": coins, "wait": wait, "bonus": settings.daily_bonus}
+    return {"claimed": ok, "coins": coins, "wait": wait, "bonus": getattr(db, "last_bonus", settings.daily_bonus) if ok else settings.daily_bonus}
 
 
 @app.get("/api/leaderboard")
@@ -178,6 +183,9 @@ async def ws_endpoint(ws: WebSocket):
                         await ws.send_json({"t": "error", "fatal": True, "msg": "Room not found or expired"})
                         break
                     user = db.upsert_user(tg["id"], tg["name"], tg["username"], tg["photo"])
+                    if user.get("banned"):
+                        await ws.send_json({"t": "error", "fatal": True, "msg": "Your account is banned"})
+                        break
                     await rooms.join(r, user, ws)
                     room, uid = r, user["id"]
                     for entry in r.chat[-15:]:
