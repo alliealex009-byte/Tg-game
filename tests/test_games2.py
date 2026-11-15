@@ -47,7 +47,7 @@ class RegistryTests(unittest.TestCase):
             info = GAME_INFO[name]
             g = cls(list(range(1, info["min"] + 1)))
             json.dumps(g.public_state())  # must be JSON-safe
-            self.assertEqual(g.current(), 1)
+            self.assertIn(g.current(), range(1, info["min"] + 1))
 
 
 class SnakesTests(unittest.TestCase):

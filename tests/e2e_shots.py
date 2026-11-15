@@ -34,7 +34,7 @@ from app.games import carrom  # noqa: E402
 from app.games.base import GameError  # noqa: E402
 from app.rooms import RoomManager  # noqa: E402
 
-PORT = 8766
+PORT = int(os.environ.get("E2E_PORT", "8766"))
 BASE = f"http://127.0.0.1:{PORT}"
 OUT = Path(os.environ.get("SHOTS_DIR", ROOT / "shots"))
 VIEW = {"width": 390, "height": 844}

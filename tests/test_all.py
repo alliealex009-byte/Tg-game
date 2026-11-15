@@ -378,7 +378,7 @@ class RoomTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(GameError):
                 self.rm.create(1, "ludo", bad)
         with self.assertRaises(GameError):
-            self.rm.create(1, "chess", 0)
+            self.rm.create(1, "nosuchgame", 0)
         self.db.add_coins(1, -1000, "x")
         with self.assertRaises(GameError):
             self.rm.create(1, "ludo", 100)
