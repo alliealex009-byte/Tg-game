@@ -1,16 +1,38 @@
-# Telegram Game Hub (7 games)
+# GAMELY - Telegram Game Hub Bot (24 games)
 
-A Telegram bot plus mini app for multiplayer games, modelled on LudoKingProbot.
+Owner: AAKASH (@Advik_prakashh) · Sister bot: @Groupingabot (group and channel management)
 
-| Game | Players | Command | Notes |
+| Game | Players | Command | Category |
 |---|---|---|---|
-| 🎲 Ludo | 2-4 | `/playludo [bet]` | real rules: 6 to leave, captures, safe stars, exact finish |
-| 🐍 Snakes & Ladders | 2-4 | `/playsnake [bet]` | 10 snakes, 9 ladders, exact roll to win, 6 rolls again |
-| 🎯 Carrom | 2 | `/playcarrom [bet]` | server-side physics, drag back to aim and set power |
-| 🔴 Connect Four | 2 | `/playc4 [bet]` | animated drops, winning line highlight |
-| ❌ Tic-Tac-Toe | 2 | `/playttt [bet]` | |
-| ✊ Rock Paper Scissors | 2 | `/playrps [bet]` | first to 2 wins, picks hidden until both are in |
-| 🧠 Memory Match | 2 | `/playmemory [bet]` | 8 pairs, a match lets you go again |
+| 🎲 Ludo | 2-4 | `/playludo [bet]` | Classic |
+| 🐍 Snakes & Ladders | 2-4 | `/playsnake [bet]` | Classic |
+| 🎯 Carrom | 2-2 | `/playcarrom [bet]` | Classic |
+| 🔴 Connect Four | 2-2 | `/playc4 [bet]` | Classic |
+| ❌ Tic-Tac-Toe | 2-2 | `/playttt [bet]` | Classic |
+| ✊ Rock Paper Scissors | 2-2 | `/playrps [bet]` | Classic |
+| 🧠 Memory Match | 2-2 | `/playmemory [bet]` | Classic |
+| ♟️ Chess | 2-2 | `/playchess [bet]` | Board |
+| 🔵 Checkers | 2-2 | `/playcheckers [bet]` | Board |
+| ⚫ Reversi | 2-2 | `/playreversi [bet]` | Board |
+| ⭕ Gomoku | 2-2 | `/playgomoku [bet]` | Board |
+| ❎ Ultimate Tic-Tac-Toe | 2-2 | `/playuttt [bet]` | Board |
+| 🚢 Battleship | 2-2 | `/playbattleship [bet]` | Board |
+| 🟥 UNO | 2-6 | `/playuno [bet]` | Cards |
+| 🎱 Crazy Eights | 2-5 | `/playcrazy8 [bet]` | Cards |
+| 🐟 Go Fish | 2-4 | `/playgofish [bet]` | Cards |
+| 🂡 Blackjack | 2-5 | `/playblackjack [bet]` | Casino |
+| 🃏 Teen Patti | 2-6 | `/playteenpatti [bet]` | Casino |
+| 🐷 Pig | 2-4 | `/playpig [bet]` | Casino |
+| 🎲 Liar's Dice | 2-5 | `/playliar [bet]` | Casino |
+| 🎱 Bingo | 2-6 | `/playbingo [bet]` | Party |
+| 🪵 Nim | 2-2 | `/playnim [bet]` | Brain |
+| 🥜 Mancala | 2-2 | `/playmancala [bet]` | Brain |
+| 🔲 Dots & Boxes | 2-2 | `/playdots [bet]` | Brain |
+
+Bot features: banner welcome with sister-bot and owner credit, DM menu (games by category, profile, daily streak bonus, leaderboard,
+invite and earn up to 700 coins per friend, help), owner panel `/panel` (stats, broadcast to users/groups/all, ban/unban, coins,
+verification switch), join-request verification (captcha in DM, approve on pass, decline after 3 fails; groups use `/verify on|off`),
+welcome message when added to a group. Put your Telegram id in `ADMIN_IDS` to unlock the owner panel.
 
 All games share: lobby with room code and share button, host start, computer players (free games), entry bets,
 turn timers, AFK handling, rematch, chat and sound. `/games` lists them in the bot.
@@ -80,6 +102,11 @@ cp data/ludo.db backup-$(date +%F).db
 3. Add a `build` and `apply` renderer in `webapp/games.js` and register it with `HUB.UI.<game_type> = {build, apply}`.
 
 The `/playX` bot command, lobby, bets, payouts, timers, AFK, bots, chat and rematch all work automatically.
+
+## Not finished yet
+Mafia, Hangman, Mastermind, Trivia and the action games (Boxing, Car Racing, Adventure, Tank Duel) have partial engines but no mini-app
+screens yet, so they are hidden automatically (a game group is only offered once its `webapp/g_<group>.js` renderer exists).
+Spectators, emoji reactions, host transfer after 70 s offline and MongoDB storage are also still to do.
 
 ## Tests
 ```bash
