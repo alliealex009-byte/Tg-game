@@ -37,7 +37,9 @@ class RPSGame(BaseGame):
     def handle(self, uid, msg):
         if self.finished:
             raise GameError("The game is over")
-        if uid != self.current():
+        if uid not in self.scores:
+            raise GameError("You are not playing")
+        if uid in self.picks:
             raise GameError("You already picked, wait for your opponent")
         if msg.get("t") != "pick":
             raise GameError("Unknown action")
