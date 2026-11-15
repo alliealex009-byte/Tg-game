@@ -5,6 +5,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY webapp ./webapp
+COPY assets ./assets
 RUN mkdir -p /srv/data
 EXPOSE 8000
 # ONE worker only: rooms live in memory.
