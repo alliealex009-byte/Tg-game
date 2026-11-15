@@ -34,3 +34,9 @@ class BaseGame:
 
     def public_state(self) -> dict:
         raise NotImplementedError
+
+    winners = None  # optional list of uids for multi-winner games (team games, Mafia...)
+
+    def view(self, uid: int) -> dict:
+        """State as seen by one player. Hidden-information games override this; default is public."""
+        return self.public_state()
