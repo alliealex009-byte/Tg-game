@@ -1,6 +1,8 @@
 """SQLite storage: users, coin ledger, match history. Synchronous and tiny on purpose."""
 from __future__ import annotations
 
+from .rewards import referral_reward
+
 import json
 import os
 import sqlite3
@@ -109,18 +111,24 @@ class DB:
     def set_chat_active(self, cid: int, active: bool):
         self.c.execute("UPDATE chats SET active=? WHERE id=?", (1 if active else 0, cid))
 
-    def set_referrer(self, uid: int, ref: int, bonus: int) -> bool:
-        """Credit a referral once, only for a brand-new user who isn't referring themselves."""
+    def set_referrer(self, uid: int, ref: int, bonus: int = 700) -> int:
+        """Credit a referral once, only for a brand-new user who isn't referring themselves.
+        Returns the coins the referrer earned (0 if nothing was credited). `bonus` is the cap."""
         if uid == ref:
-            return False
+            return 0
         u, r = self.get_user(uid), self.get_user(ref)
         if not u or not r or u["referrer"] is not None or u["games"] > 0:
-            return False
+            return 0
+        reward = referral_reward(r["refs"], bonus)
         self.c.execute("UPDATE users SET referrer=? WHERE id=?", (ref, uid))
         self.c.execute("UPDATE users SET refs=refs+1 WHERE id=?", (ref,))
-        self.add_coins(ref, bonus, f"referral:{uid}")
-        self.add_coins(uid, bonus // 2, f"referred:{ref}")
-        return True
+        self.add_coins(ref, reward, f"referral:{uid}")
+        self.add_coins(uid, reward // 2, f"referred:{ref}")
+        return reward
+
+    def chat_list(self, limit: int = 30):
+        rows = self.c.execute("SELECT title,type FROM chats WHERE active=1 ORDER BY added DESC LIMIT ?", (limit,)).fetchall()
+        return [{"title": r["title"], "type": r["type"]} for r in rows]
 
     # ---------- users ----------
     def get_user(self, uid: int):
