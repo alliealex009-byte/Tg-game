@@ -1,169 +1,159 @@
-"""Quiz race: 7 questions, everyone answers at once. Correct answers score, the fastest score a bonus."""
+"""Trivia: 10 multiple-choice questions, everybody answers at once (15 s). Faster correct answers score more,
+streaks add a bonus. The correct answer and other players' picks stay hidden until the reveal."""
 from __future__ import annotations
 
 import random
+import time
 
 from .base import BaseGame, GameError
+from .trivia_bank import Q
 
-BANK = [
-    ("What is the capital of Australia?", "Canberra", ["Sydney", "Melbourne", "Perth"]),
-    ("Which is the largest planet in our solar system?", "Jupiter", ["Saturn", "Neptune", "Earth"]),
-    ("How many continents are there?", "7", ["5", "6", "8"]),
-    ("What is the chemical symbol for gold?", "Au", ["Ag", "Gd", "Go"]),
-    ("Who painted the Mona Lisa?", "Leonardo da Vinci", ["Michelangelo", "Raphael", "Picasso"]),
-    ("Which is the largest ocean?", "Pacific", ["Atlantic", "Indian", "Arctic"]),
-    ("What is the fastest land animal?", "Cheetah", ["Lion", "Horse", "Leopard"]),
-    ("What is the hardest natural substance?", "Diamond", ["Quartz", "Iron", "Granite"]),
-    ("What is the smallest prime number?", "2", ["0", "1", "3"]),
-    ("What is the national animal of India?", "Tiger", ["Lion", "Elephant", "Peacock"]),
-    ("Which gas do plants absorb from the air?", "Carbon dioxide", ["Oxygen", "Nitrogen", "Helium"]),
-    ("What is the currency of Japan?", "Yen", ["Won", "Yuan", "Dollar"]),
-    ("How many sides does a hexagon have?", "6", ["5", "7", "8"]),
-    ("Who wrote Romeo and Juliet?", "William Shakespeare", ["Charles Dickens", "Mark Twain", "Jane Austen"]),
-    ("At what temperature does water boil at sea level (°C)?", "100", ["90", "110", "212"]),
-    ("Which planet is known as the Red Planet?", "Mars", ["Venus", "Mercury", "Jupiter"]),
-    ("In which city is the Taj Mahal?", "Agra", ["Delhi", "Jaipur", "Lucknow"]),
-    ("Which mountain range contains Mount Everest?", "Himalayas", ["Andes", "Alps", "Rockies"]),
-    ("What is the largest mammal?", "Blue whale", ["Elephant", "Giraffe", "Hippo"]),
-    ("Which organ pumps blood around the body?", "Heart", ["Liver", "Lungs", "Kidney"]),
-    ("In which year did India become independent?", "1947", ["1942", "1950", "1935"]),
-    ("Which sport is played at Wimbledon?", "Tennis", ["Cricket", "Golf", "Badminton"]),
-    ("How many players per side are on the field in football (soccer)?", "11", ["9", "10", "12"]),
-    ("What is 5 in binary?", "101", ["110", "011", "111"]),
-    ("What does HTML stand for?", "HyperText Markup Language", ["High Tech Modern Language", "HyperTransfer Markup Logic", "Home Tool Markup Language"]),
-    ("Which planet is famous for its rings?", "Saturn", ["Mars", "Mercury", "Venus"]),
-    ("What is the square root of 144?", "12", ["14", "11", "13"]),
-    ("Who is credited with discovering gravity after watching an apple fall?", "Isaac Newton", ["Albert Einstein", "Galileo", "Nikola Tesla"]),
-    ("Who is credited with inventing the telephone?", "Alexander Graham Bell", ["Thomas Edison", "Nikola Tesla", "Marconi"]),
-    ("What is the capital of France?", "Paris", ["Lyon", "Marseille", "Nice"]),
-    ("What is the largest hot desert in the world?", "Sahara", ["Gobi", "Kalahari", "Thar"]),
-    ("How many strings does a standard guitar have?", "6", ["4", "5", "7"]),
-    ("Which bird is the fastest in a dive?", "Peregrine falcon", ["Eagle", "Hummingbird", "Ostrich"]),
-    ("How many squares are on a chessboard?", "64", ["32", "81", "100"]),
-    ("Which vitamin do we get from sunlight?", "Vitamin D", ["Vitamin C", "Vitamin A", "Vitamin B12"]),
-    ("Which is the largest country by area?", "Russia", ["Canada", "China", "USA"]),
-    ("What is the chemical formula of water?", "H2O", ["CO2", "O2", "HO"]),
-    ("What is the capital of Japan?", "Tokyo", ["Kyoto", "Osaka", "Seoul"]),
-    ("What is 7 × 8?", "56", ["54", "49", "64"]),
-    ("Which planet is closest to the Sun?", "Mercury", ["Venus", "Earth", "Mars"]),
-    ("What is the tallest animal?", "Giraffe", ["Elephant", "Camel", "Ostrich"]),
-    ("Who is known as the Father of the Nation in India?", "Mahatma Gandhi", ["Jawaharlal Nehru", "Subhas Chandra Bose", "Sardar Patel"]),
-]
-ROUNDS = 7
-BONUS = [60, 30]
+QUESTIONS, ASK_S, REVEAL_S = 10, 15, 4
 
 
 class TriviaGame(BaseGame):
     name = "trivia"
-    min_players, max_players = 2, 6
+    min_players = 2
+    max_players = 6
+    ticker = True  # timeouts are normal here, not AFK strikes
 
-    def __init__(self, players, rng=None):
+    def __init__(self, players, rng=None, clock=time.monotonic):
         if not 2 <= len(players) <= 6:
-            raise ValueError("Quiz needs 2-6 players")
-        self.rng = rng or random.SystemRandom()
+            raise ValueError("Trivia needs 2-6 players")
+        self.rng, self.clock = rng or random.SystemRandom(), clock
         self.players = list(players)
-        self.score = {u: 0 for u in self.players}
         self.left = set()
-        self.qs = []
-        for q, a, wrong in self.rng.sample(BANK, ROUNDS):
-            opts = [a] + list(wrong)
-            self.rng.shuffle(opts)
-            self.qs.append({"q": q, "options": opts, "c": opts.index(a)})
-        self.round = 0
-        self.seq, self.last_round = 0, None
-        self.winner, self.finished, self.draw = None, False, False
+        self.scores = {u: 0 for u in self.players}
+        self.streak = {u: 0 for u in self.players}
+        self.order = self.rng.sample(range(len(Q)), QUESTIONS)
+        self.qi = -1
+        self.phase = "ask"
+        self.phase_id = 0
+        self.phase_seconds = ASK_S
+        self.picks, self.gained = {}, {}
+        self.seq = 0
+        self.last_reveal = None
+        self.winner = None
         self.winners = None
-        self._open()
+        self.finished = False
+        self.draw = False
+        self._next_question()
 
-    def _open(self):
-        self.answers = {}   # uid -> option index (or -1 for no answer), in arrival order
-        for u in self.players:
-            if u < 0:  # computers answer instantly, correct about 65% of the time
-                c = self.qs[self.round]["c"]
-                self.answers[u] = c if self.rng.random() < 0.65 else self.rng.choice([i for i in range(4) if i != c])
+    def _q(self):
+        return Q[self.order[self.qi]]
 
-    def _live(self):
+    def _active(self):
         return [u for u in self.players if u not in self.left]
+
+    def _next_question(self):
+        self.qi += 1
+        self.phase = "ask"
+        self.phase_id += 1
+        self.phase_seconds = ASK_S
+        self.picks, self.gained, self.t0 = {}, {}, self.clock()
+        correct = self._q()[3]
+        for u in self._active():
+            if u < 0:  # computer players answer instantly with a believable time
+                ok = self.rng.random() < 0.6
+                c = correct if ok else self.rng.choice([i for i in range(4) if i != correct])
+                self.picks[u] = (c, self.rng.uniform(2.5, 11.0))
+        if not self._pending():
+            self._reveal()
+
+    def _pending(self):
+        return [u for u in self._active() if u not in self.picks]
 
     def current(self):
         if self.finished:
             return None
-        pend = [u for u in self._live() if u not in self.answers]
-        humans = [u for u in pend if u > 0]
-        return (humans or pend or [None])[0]
+        pend = [u for u in self._pending() if u > 0]
+        if self.phase == "ask" and pend:
+            return pend[0]
+        act = [u for u in self._active() if u > 0] or self._active() or self.players
+        return act[0]
 
     def handle(self, uid, msg):
         if self.finished:
             raise GameError("The game is over")
-        if uid not in self.score or uid in self.left:
-            raise GameError("You are not playing")
-        i = msg.get("i")
-        if msg.get("t") != "answer" or isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < 4:
-            raise GameError("Pick an answer")
-        if uid in self.answers:
+        if uid not in self.players or uid in self.left:
+            raise GameError("You are not in this game")
+        if msg.get("t") != "answer":
+            raise GameError("Unknown action")
+        if self.phase != "ask":
+            raise GameError("Wait for the next question")
+        c = msg.get("choice")
+        if isinstance(c, bool) or not isinstance(c, int) or not 0 <= c < 4:
+            raise GameError("Pick one of the four answers")
+        if uid in self.picks:
             raise GameError("You already answered")
-        self.answers[uid] = i
-        self._maybe_close()
+        self.picks[uid] = (c, max(0.0, min(ASK_S, self.clock() - self.t0)))
+        if not self._pending():
+            self._reveal()
 
-    def _maybe_close(self):
-        if all(u in self.answers for u in self._live()):
-            self._close()
-
-    def _close(self):
-        q = self.qs[self.round]
-        gains, order = {}, [u for u in self.answers if self.answers[u] == q["c"] and u in self._live()]
-        # humans' arrival order is dict order; bots were inserted first, so give bonus to humans first
-        order.sort(key=lambda u: (u < 0))
-        for k, u in enumerate(order):
-            gains[u] = 100 + (BONUS[k] if k < len(BONUS) else 0)
-            self.score[u] += gains[u]
-        for u in self._live():
-            self.answers.setdefault(u, -1)
-        self.seq += 1
-        self.last_round = {"seq": self.seq, "round": self.round + 1, "q": q["q"], "options": q["options"], "c": q["c"],
-                           "answers": {str(u): a for u, a in self.answers.items()}, "gains": {str(u): g for u, g in gains.items()}}
-        self.round += 1
-        if self.round >= ROUNDS:
-            self.finished = True
-            pool = {u: s for u, s in self.score.items() if u not in self.left}
-            best = max(pool.values())
-            top = [u for u, s in pool.items() if s == best]
-            if len(top) == 1:
-                self.winner = top[0]
-            elif len(top) == len(pool):
-                self.draw = True
+    def _reveal(self):
+        correct = self._q()[3]
+        for u in self._active():
+            p = self.picks.get(u)
+            if p is not None and p[0] == correct:
+                self.streak[u] += 1
+                pts = 100 + int(100 * max(0.0, ASK_S - p[1]) / ASK_S) + 20 * min(self.streak[u] - 1, 5)
+                self.gained[u] = pts
+                self.scores[u] += pts
             else:
-                self.winners, self.winner = top, top[0]
-        else:
-            self._open()
+                self.streak[u] = 0
+                self.gained[u] = 0
+        self.phase = "reveal"
+        self.phase_id += 1
+        self.phase_seconds = REVEAL_S
+        self.seq += 1
+        self.last_reveal = {"seq": self.seq, "q": self.qi, "correct": correct,
+                            "picks": {str(u): (self.picks[u][0] if u in self.picks else None) for u in self._active()},
+                            "gained": {str(u): g for u, g in self.gained.items()}}
 
     def auto_play(self):
         if self.finished:
             return
-        for u in self._live():
-            if u not in self.answers:
-                self.answers[u] = self.rng.randrange(4) if u < 0 else -1
-        self._close()
+        if self.phase == "ask":
+            self._reveal()
+        elif self.qi + 1 >= QUESTIONS:
+            self._finish()
+        else:
+            self._next_question()
+
+    def _finish(self):
+        self.finished, self.phase = True, "over"
+        act = self._active() or self.players
+        top = max(self.scores[u] for u in act)
+        w = [u for u in act if self.scores[u] == top]
+        self.winners = w
+        self.winner = w[0] if len(w) == 1 else None
 
     def remove_player(self, uid):
-        if uid not in self.score or uid in self.left or self.finished:
+        if uid not in self.players or self.finished or uid in self.left:
             return
         self.left.add(uid)
-        act = self._live()
-        if len(act) <= 1:
-            self.finished, self.winner = True, act[0] if act else None
-        else:
-            self._maybe_close()
+        act = self._active()
+        if len(act) < 2:
+            self.finished, self.phase = True, "over"
+            self.winners = act
+            self.winner = act[0] if act else None
+        elif self.phase == "ask" and not self._pending():
+            self._reveal()
 
     def public_state(self):
-        q = None if self.finished else self.qs[self.round]
-        return {"kind": "trivia", "rounds": ROUNDS, "round": min(self.round + 1, ROUNDS),
-                "players": [{"uid": u, "score": self.score[u], "answered": u in self.answers, "left": u in self.left} for u in self.players],
-                "q": q["q"] if q else None, "options": q["options"] if q else [], "turn": self.current(),
-                "last_round": self.last_round, "mine": None, "winner": self.winner, "draw": self.draw}
+        q = self._q()
+        rev = self.phase in ("reveal", "over")
+        return {
+            "kind": "trivia",
+            "players": [{"uid": u, "score": self.scores[u], "streak": self.streak[u], "left": u in self.left,
+                         "answered": u in self.picks} for u in self.players],
+            "phase": self.phase, "turn": None, "q": self.qi + 1, "total": QUESTIONS, "category": q[0], "question": q[1],
+            "options": q[2], "seq": self.seq, "reveal": self.last_reveal if rev else None,
+            "winner": self.winner, "winners": self.winners if (self.winners and len(self.winners) > 1) else None, "draw": False,
+        }
 
     def view(self, uid):
         st = self.public_state()
-        if uid in self.answers:
-            st["mine"] = self.answers[uid]
+        p = self.picks.get(uid)
+        st["my_pick"] = p[0] if p else None
         return st

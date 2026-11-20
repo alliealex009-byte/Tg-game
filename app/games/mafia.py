@@ -14,7 +14,6 @@ NIGHT_S, DAY_S, VOTE_S, QUICK_S, BOT_ONLY_S = 25, 40, 25, 6, 3
 
 
 def role_counts(n: int) -> dict:
-    mafia = max(1, n // 4 + (1 if n >= 6 else 0)) if n < 9 else 3
     mafia = {4: 1, 5: 1, 6: 2, 7: 2, 8: 2, 9: 3, 10: 3}.get(n, 1)
     doctor = 1
     detective = 1 if n >= 5 else 0
@@ -334,7 +333,7 @@ class MafiaGame(BaseGame):
             "players": [{"uid": u, "alive": u in self.alive, "left": u in self.left,
                          "role": self.roles[u] if (reveal or u not in self.alive) else None,
                          "out": self.dead_info.get(u)} for u in self.players],
-            "phase": self.phase, "day": self.day, "turn": self.current(), "seq": self.seq,
+            "phase": self.phase, "day": self.day, "turn": None, "seq": self.seq,  # never expose who is still to act
             "last_event": self.last_event, "log": self.log,
             "votes": {str(k): v for k, v in self.votes.items()} if self.phase == "vote" else {},
             "skipped": len(self.skips) if self.phase == "day" else 0,

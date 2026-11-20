@@ -1,110 +1,138 @@
-"""Hangman for 2-4 players. Take turns guessing letters; a correct letter scores per occurrence and keeps your turn.
-After 7 wrong guesses the man is hanged; the player with the most letters wins."""
+"""Hangman for 2-6 players. One shared word; players take turns guessing letters. A correct letter lets you
+go again and scores per occurrence (+3 for finishing the word); a wrong letter adds to the shared gallows and
+passes the turn. 6 wrong guesses lose the word. Best of 3 words by score."""
 from __future__ import annotations
 
 import random
-import string
 
 from .base import BaseGame, GameError
+from .words import ALL_WORDS
 
-WORDS = ["elephant", "volcano", "notebook", "football", "mountain", "umbrella", "chocolate", "treasure", "adventure", "keyboard",
-         "universe", "pyramid", "dolphin", "fireworks", "lightning", "backpack", "rainbow", "sandwich", "telescope", "penguin",
-         "butterfly", "airplane", "festival", "diamond", "elevator", "hospital", "kangaroo", "lantern", "monsoon", "pancake"]
-MAX_WRONG = 7
+ROUNDS, MAX_WRONG = 3, 6
+FREQ = "etaoinshrdlcumwfgypbvkjxqz"
 
 
 class HangmanGame(BaseGame):
     name = "hangman"
-    min_players, max_players = 2, 4
+    min_players = 2
+    max_players = 6
 
     def __init__(self, players, rng=None):
-        if not 2 <= len(players) <= 4:
-            raise ValueError("Hangman needs 2-4 players")
+        if not 2 <= len(players) <= 6:
+            raise ValueError("Hangman needs 2-6 players")
         self.rng = rng or random.SystemRandom()
         self.players = list(players)
-        self.word = self.rng.choice(WORDS)
-        self.guessed = []
-        self.wrong = 0
-        self.score = {u: 0 for u in self.players}
+        self.scores = {u: 0 for u in self.players}
         self.left = set()
-        self.turn_idx = 0
-        self.seq, self.last_guess = 0, None
-        self.winner, self.finished, self.draw = None, False, False
+        self.round = 0
+        self.used_words = set()
+        self.idx = 0
+        self.seq = 0
+        self.last_guess = None
+        self.last_word = None
+        self.winner = None
         self.winners = None
+        self.finished = False
+        self.draw = False
+        self._new_word()
+
+    # ---- helpers
+    def _active(self):
+        return [u for u in self.players if u not in self.left]
+
+    def _new_word(self):
+        self.round += 1
+        pool = [cw for cw in ALL_WORDS if cw[1] not in self.used_words]
+        self.category, self.word = self.rng.choice(pool)
+        self.used_words.add(self.word)
+        self.guessed, self.wrong = [], 0
+        act = self._active()
+        self.turn = act[(self.round - 1) % len(act)]
 
     def current(self):
-        return None if self.finished else self.players[self.turn_idx]
+        return None if self.finished else self.turn
 
-    def _next(self):
-        for _ in range(len(self.players)):
-            self.turn_idx = (self.turn_idx + 1) % len(self.players)
-            if self.players[self.turn_idx] not in self.left:
-                return
+    def _next_turn(self):
+        act = self._active()
+        i = act.index(self.turn) if self.turn in act else -1
+        self.turn = act[(i + 1) % len(act)]
 
     def handle(self, uid, msg):
         if self.finished:
             raise GameError("The game is over")
-        if uid != self.current():
+        if uid != self.turn:
             raise GameError("It's not your turn")
-        ch = msg.get("letter")
-        if msg.get("t") != "letter" or not isinstance(ch, str) or len(ch) != 1 or ch.lower() not in string.ascii_lowercase:
-            raise GameError("Pick a letter")
-        ch = ch.lower()
-        if ch in self.guessed:
-            raise GameError("That letter was already tried")
-        self._guess(uid, ch)
+        if msg.get("t") != "guess":
+            raise GameError("Unknown action")
+        l = msg.get("letter")
+        if not isinstance(l, str) or len(l) != 1 or not ("a" <= l.lower() <= "z"):
+            raise GameError("Pick a letter A-Z")
+        l = l.lower()
+        if l in self.guessed:
+            raise GameError("That letter was already guessed")
+        self._guess(uid, l)
 
-    def _guess(self, uid, ch):
-        self.guessed.append(ch)
-        n = self.word.count(ch)
+    def _guess(self, uid, l):
+        self.guessed.append(l)
+        cnt = self.word.count(l)
         self.seq += 1
-        self.last_guess = {"seq": self.seq, "uid": uid, "letter": ch, "hits": n}
-        if n:
-            self.score[uid] += n
+        self.last_guess = {"seq": self.seq, "uid": uid, "letter": l, "hit": cnt > 0, "count": cnt}
+        if cnt:
+            self.scores[uid] += cnt
+            if all(c in self.guessed for c in self.word):
+                self.scores[uid] += 3
+                return self._end_word(uid)
+            return  # go again
+        self.wrong += 1
+        if self.wrong >= MAX_WRONG:
+            return self._end_word(None)
+        self._next_turn()
+
+    def _end_word(self, solver):
+        self.seq += 1
+        self.last_word = {"seq": self.seq, "word": self.word, "solved_by": solver, "round": self.round}
+        if self.round >= ROUNDS:
+            return self._finish()
+        self._new_word()
+
+    def _finish(self):
+        self.finished = True
+        act = self._active() or self.players
+        top = max(self.scores[u] for u in act)
+        w = [u for u in act if self.scores[u] == top]
+        if len(w) == 1:
+            self.winner, self.winners = w[0], w
         else:
-            self.wrong += 1
-        solved = all(c in self.guessed for c in self.word)
-        if solved or self.wrong >= MAX_WRONG:
-            self.finished = True
-            pool = {u: s for u, s in self.score.items() if u not in self.left}
-            best = max(pool.values())
-            top = [u for u, s in pool.items() if s == best]
-            if len(top) == 1:
-                self.winner = top[0]
-            elif len(top) == len(pool):
-                self.draw = True
-            else:
-                self.winners, self.winner = top, top[0]
-        elif not n:
-            self._next()
+            self.draw = True
 
     def auto_play(self):
         if self.finished:
             return
-        pat = [c if c in self.guessed else None for c in self.word]
-        cands = [w for w in WORDS if len(w) == len(self.word) and all(p is None or p == c for p, c in zip(pat, w))
-                 and not any(g in w for g in self.guessed if g not in pat)]
-        freq = {}
-        for w in cands or [self.word]:
-            for c in set(w):
-                if c not in self.guessed:
-                    freq[c] = freq.get(c, 0) + 1
-        letters = [c for c in string.ascii_lowercase if c not in self.guessed]
-        self._guess(self.current(), max(freq, key=lambda c: freq[c] + self.rng.random()) if freq and self.rng.random() < 0.8 else self.rng.choice(letters))
+        cand = [x for x in FREQ if x not in self.guessed]
+        self._guess(self.turn, cand[min(len(cand) - 1, int(self.rng.random() ** 2 * 5))])
 
     def remove_player(self, uid):
-        if uid not in self.score or uid in self.left or self.finished:
+        if uid not in self.scores or self.finished or uid in self.left:
             return
-        was = self.current() == uid
         self.left.add(uid)
-        act = [u for u in self.players if u not in self.left]
-        if len(act) <= 1:
-            self.finished, self.winner = True, act[0] if act else None
-        elif was:
-            self._next()
+        act = self._active()
+        if len(act) < 2:
+            self.finished = True
+            if act:
+                self.winner, self.winners = act[0], act
+            return
+        if self.turn == uid:
+            i = self.players.index(uid)
+            self.turn = next(self.players[(i + k) % len(self.players)] for k in range(1, len(self.players) + 1)
+                             if self.players[(i + k) % len(self.players)] not in self.left)
 
     def public_state(self):
-        return {"kind": "hangman", "max_wrong": MAX_WRONG, "wrong": self.wrong, "guessed": self.guessed,
-                "word": "".join(c if (c in self.guessed or self.finished) else "_" for c in self.word),
-                "players": [{"uid": u, "score": self.score[u], "left": u in self.left} for u in self.players],
-                "turn": self.current(), "last_guess": self.last_guess, "winner": self.winner, "draw": self.draw}
+        return {
+            "kind": "hangman",
+            "players": [{"uid": u, "score": self.scores[u], "left": u in self.left} for u in self.players],
+            "mask": [c if c in self.guessed else None for c in self.word],
+            "category": self.category, "guessed": list(self.guessed), "wrong": self.wrong, "max_wrong": MAX_WRONG,
+            "round": self.round, "rounds": ROUNDS, "turn": self.turn if not self.finished else None,
+            "seq": self.seq, "last_guess": self.last_guess, "last_word": self.last_word,
+            "winner": self.winner, "winners": self.winners, "draw": self.draw,
+        }
