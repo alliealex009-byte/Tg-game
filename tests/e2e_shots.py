@@ -29,6 +29,9 @@ from playwright.async_api import async_playwright  # noqa: E402
 from app.auth import user_from_init_data  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.db import DB  # noqa: E402
+from app.arcade import Arcade
+from app.idle import Idle
+from app.howto import ARCADE_TIPS, HOWTO
 from app.games import GAME_INFO  # noqa: E402
 from app.games import carrom  # noqa: E402
 from app.games.base import GameError  # noqa: E402
@@ -114,6 +117,8 @@ class Harness:
         self.db = DB(":memory:", 1000, 200)
         self.rm = RoomManager(self.db, self.settings)
         self.errors = []
+        self.arcade = Arcade(self.db, clock=lambda: time.time() + getattr(self, 'skew', 0))
+        self.idle = Idle(self.arcade, clock=lambda: time.time() + getattr(self, 'skew', 0))
 
     def user(self, name):
         uid = dev_uid(name)
@@ -150,7 +155,9 @@ class Harness:
         try:
             if path == "/api/config":
                 return await route.fulfill(json={"bot": "LudoKingProbot", "app": "LudoGame", "games": GAME_INFO,
-                                                 "bets": [0, 50, 100, 500, 1000], "daily": 200, "rake": 10, "dev": True})
+                                                 "bets": [0, 50, 100, 500, 1000], "daily": 200, "rake": 10, "dev": True,
+                                                 "owner": {"name": "AAKASH", "username": "Advik_prakashh"}, "sister": "Groupingabot",
+                                                 "howto": HOWTO, "arcade_tips": ARCADE_TIPS, "version": "test"})
             if path == "/api/leaderboard":
                 rows = self.db.leaderboard(15)
                 return await route.fulfill(json={"rows": [{k: r[k] for k in ("id", "name", "username", "photo", "wins", "games")} for r in rows]})
@@ -158,7 +165,34 @@ class Harness:
             u = self.db.upsert_user(tg["id"], tg["name"], tg["username"], tg["photo"])
             if path == "/api/me":
                 pu = {k: u[k] for k in ("id", "name", "username", "photo", "coins", "games", "wins")}
-                return await route.fulfill(json={"user": pu, "daily_wait": self.db.daily_wait(u["id"])})
+                return await route.fulfill(json={"user": pu, "daily_wait": self.db.daily_wait(u["id"]), "is_admin": True})
+            d = request.post_data_json if request.post_data else {}
+            if path.startswith("/api/idle/"):
+                try:
+                    kind = path.rsplit("/", 1)[1]
+                    out = self.idle.state(kind, u["id"]) if not d.get("action") else self.idle.act(kind, u["id"], d.get("action"), d.get("arg"))
+                except ValueError as e:
+                    return await route.fulfill(status=400, json={"detail": str(e)})
+                return await route.fulfill(json=out)
+            if path.startswith("/api/arcade/") or path.startswith("/api/tap") or path == "/api/farm":
+                a = self.arcade
+                try:
+                    if path == "/api/arcade/start":
+                        a.start(u["id"], d.get("game")); out = {"ok": True}
+                    elif path == "/api/arcade/claim":
+                        out = a.claim(u["id"], d.get("game"), d.get("score"))
+                    elif path == "/api/tap":
+                        out = a.tap_state(u["id"]) if d.get("n") is None else a.tap(u["id"], d.get("n"))
+                    elif path == "/api/tap/upgrade":
+                        out = a.tap_upgrade(u["id"])
+                    else:
+                        out = a.farm_state(u["id"]) if not d.get("action") else a.farm_act(u["id"], d.get("idx"), d.get("action"))
+                except ValueError as e:
+                    return await route.fulfill(status=400, json={"detail": str(e)})
+                return await route.fulfill(json=out)
+            if path == "/api/owner/stats":
+                st = self.db.stats(); st["live_rooms"] = len(self.rm.rooms); st["online"] = 0
+                return await route.fulfill(json=st)
             if path == "/api/daily":
                 ok, coins, wait = self.db.claim_daily(u["id"])
                 return await route.fulfill(json={"claimed": ok, "coins": coins, "wait": wait, "bonus": 200})
