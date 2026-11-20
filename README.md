@@ -1,4 +1,4 @@
-# GAMELY - Telegram Game Hub Bot (24 games)
+# GAMELY - Telegram Game Hub Bot (28 games)
 
 Owner: AAKASH (@Advik_prakashh) · Sister bot: @Groupingabot (group and channel management)
 
@@ -28,6 +28,10 @@ Owner: AAKASH (@Advik_prakashh) · Sister bot: @Groupingabot (group and channel 
 | 🪵 Nim | 2-2 | `/playnim [bet]` | Brain |
 | 🥜 Mancala | 2-2 | `/playmancala [bet]` | Brain |
 | 🔲 Dots & Boxes | 2-2 | `/playdots [bet]` | Brain |
+| 🕵️ Mafia | 4-10 | `/playmafia [bet]` | Party |
+| 🔤 Hangman | 2-6 | `/playhangman [bet]` | Party |
+| 🎯 Mastermind | 2-2 | `/playmastermind [bet]` | Brain |
+| ❓ Trivia Quiz | 2-6 | `/playtrivia [bet]` | Brain |
 
 Bot features: banner welcome with sister-bot and owner credit, DM menu (games by category, profile, daily streak bonus, leaderboard,
 invite and earn up to 700 coins per friend, help), owner panel `/panel` (stats, broadcast to users/groups/all, ban/unban, coins,
@@ -103,15 +107,35 @@ cp data/ludo.db backup-$(date +%F).db
 
 The `/playX` bot command, lobby, bets, payouts, timers, AFK, bots, chat and rematch all work automatically.
 
+## Also included (v2.1)
+- **Arcade** (solo, pays coins, server-validated, daily cap 6000): Break Bricks, TapVerse (tap to earn + upgrades), QuickDrop, GridPop, PocketFarm (idle farm)
+- **Spectators**: anyone who opens a room that is full or running watches it live (👁 count, "Take a seat" in the lobby)
+- **Emoji reactions** floating over the game, ❓ how-to-play for every game (also ⓘ on the home cards), invite message presets
+- **Owner panel**: `/panel` in the bot and 👑 Owner in the mini app (stats, broadcast, give coins, ban). Send `/id` to the bot and put the number in `ADMIN_IDS`
+- **Host transfer**: if the host is offline for 70 s in a lobby, another connected player becomes host
+- Smooth 3D dice tumble, centred and smoother UNO/card layout
+
+## MongoDB (optional)
+Set `MONGO_URI` (and optionally `MONGO_DB`) in `.env`, for example a free MongoDB Atlas cluster:
+`MONGO_URI=mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority`
+SQLite stays the fast working store; every few seconds changed users, coins, matches, chats and settings are mirrored into MongoDB, and on start-up an empty
+local database is restored from MongoDB. So the data survives hosts with temporary disks (Railway, Render...). If MongoDB is unreachable the bot keeps running on SQLite.
+Atlas: allow your server's IP under Network Access.
+
 ## Not finished yet
-Mafia, Hangman, Mastermind, Trivia and the action games (Boxing, Car Racing, Adventure, Tank Duel) have partial engines but no mini-app
-screens yet, so they are hidden automatically (a game group is only offered once its `webapp/g_<group>.js` renderer exists).
-Spectators, emoji reactions, host transfer after 70 s offline and MongoDB storage are also still to do.
+Quiet background ambience plays only in a few games (calm drone in chess, checkers, gomoku, reversi, mancala, dominoes, word duel, ultimate tic-tac-toe; wind in Tank Duel; engine hum in Car Racing; dark pad in Quest, TeleArena, Mafia). Ludo and Carrom have none. It follows the 🔊 button and stops when the app is hidden.
+
+New arcade games (solo, pay coins, server-validated): ByteBlock, TileDash, NeonSlice, MintTap, TurboCoin.
+Idle/pet games that keep growing while you are away (progress saved on the server, daily arcade cap applies): IdleSprout, PixelPaws, TinyWorld, MiniRealm.
+
+New in this version (50 games): Scribble (`/playscribble`, draw & guess with a live shared canvas, 2-8 players). The WebSocket flood guard was raised (40 → 120 messages / 5 s) so fast tapping in ClickRush no longer disconnects players. Before that (49 games): Would You Rather (`/playwyr`), Guess the Number (`/playguess`), EmojiQuiz (`/playemoji`), Penalty Shootout (`/playpenalty`). The mini app now reconnects as soon as you come back to it after the phone slept. Before that: Poker Showdown (`/playpoker`), Yahtzee (`/playyahtzee`), Simon Duel (`/playsimon`), MathBlitz (`/playmath`). Invite links now survive server restarts (rooms are remembered for 24 h) and bots in timed games (ChatClash, PingPlay, MathBlitz) act on time. Earlier: Tank Duel (`/playtank`), Car Racing (`/playrace`), Dominoes (`/playdominoes`), Word Duel (`/playword`), Adventure Quest (`/playquest`), ClickRush (`/playclick`), PartyDrop (`/playdrop`), ChatClash (`/playchat`), PingPlay (`/playping`), CoinPulse (`/playcoin`), SquadDuel (`/playsquad`), TeleArena (`/playtele`).
 
 ## Tests
 ```bash
 python3 -m unittest discover -s tests     # engines (all 7 games), wallet/payouts, auth, room flow
 node tests/board.test.js                  # board geometry matches the engine
+python3 tests/e2e_party.py                # Mafia, Hangman, Mastermind, Trivia smoke test
+python3 tests/e2e_v21.py                  # arcade, owner panel, spectators, reactions
 python3 tests/e2e_shots.py [game ...]     # needs `playwright`: plays every game in a real headless browser, saves screenshots
 ```
 `e2e_shots.py` runs the real room manager and engines against the real mini app without Telegram or FastAPI, which makes it a good
