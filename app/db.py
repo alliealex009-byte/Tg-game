@@ -62,6 +62,12 @@ class DB:
             ("refs", "INTEGER NOT NULL DEFAULT 0"),
             ("verified", "INTEGER NOT NULL DEFAULT 0"),
             ("dm_ok", "INTEGER NOT NULL DEFAULT 1"),
+            ("tap_energy", "REAL NOT NULL DEFAULT 300"),
+            ("tap_ts", "REAL NOT NULL DEFAULT 0"),
+            ("tap_level", "INTEGER NOT NULL DEFAULT 1"),
+            ("farm", "TEXT"),
+            ("arc_day", "TEXT"),
+            ("arc_earned", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if name not in cols:
                 self.c.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")

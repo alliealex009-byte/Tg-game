@@ -28,6 +28,8 @@ class Settings:
     daily_bonus: int = 200
     rake_percent: int = 10        # % of the pot kept by the house (coin sink)
     turn_seconds: int = 20
+    mongo_uri: str = ""
+    mongo_db: str = "gamely"
     owner_name: str = "AAKASH"
     owner_username: str = "Advik_prakashh"
     sister_bot: str = "Groupingabot"
@@ -48,6 +50,8 @@ def load_settings() -> Settings:
         daily_bonus=int(e("DAILY_BONUS", "200")),
         rake_percent=max(0, min(50, int(e("RAKE_PERCENT", "10")))),
         turn_seconds=max(8, int(e("TURN_SECONDS", "20"))),
+        mongo_uri=e("MONGO_URI", "").strip(),
+        mongo_db=e("MONGO_DB", "gamely").strip() or "gamely",
         owner_name=e("OWNER_NAME", "AAKASH").strip(),
         owner_username=e("OWNER_USERNAME", "Advik_prakashh").strip().lstrip("@"),
         sister_bot=e("SISTER_BOT", "Groupingabot").strip().lstrip("@"),

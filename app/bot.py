@@ -33,8 +33,8 @@ from .verify import Verifier
 log = logging.getLogger("bot")
 
 PLAY_CMDS = {info["cmd"]: key for key, info in GAME_INFO.items()}  # e.g. {"playludo": "ludo", ...}
-CATS = ["Board", "Cards", "Party", "Casino", "Brain", "Classic"]
-CAT_EMOJI = {"Board": "♟", "Cards": "🃏", "Party": "🎭", "Casino": "🎰", "Brain": "🧠", "Classic": "🎲"}
+CATS = ["Board", "Cards", "Party", "Casino", "Brain", "Action", "Classic"]
+CAT_EMOJI = {"Action": "💥", "Board": "♟", "Cards": "🃏", "Party": "🎭", "Casino": "🎰", "Brain": "🧠", "Classic": "🎲"}
 BANNER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "banner.png")
 
 
@@ -53,7 +53,9 @@ COMMANDS = (
         BotCommand(command="profile", description="Your stats"),
         BotCommand(command="balance", description="Your coin balance"),
         BotCommand(command="daily", description="Claim your daily bonus"),
-        BotCommand(command="invite", description="Invite friends, earn coins"),
+        BotCommand(command="invite", description="Invite friends, earn up to 700 coins each"),
+        BotCommand(command="id", description="Show your Telegram id"),
+        BotCommand(command="panel", description="Owner panel (owner only)"),
         BotCommand(command="top", description="Leaderboard"),
         BotCommand(command="help", description="How to play"),
     ]
@@ -146,8 +148,9 @@ def build(settings, db, rooms):
     def sister_line() -> str:
         return f"🤖 Sister bot: {sister_tag} — manage groups &amp; channels"
 
-    def main_menu() -> Kb:
-        return Kb(inline_keyboard=[
+    def main_menu(uid: int = 0) -> Kb:
+        owner_row = [[Btn(text="👑 Owner Panel", callback_data="ow:home")]] if is_admin(uid) else []
+        return Kb(inline_keyboard=owner_row + [
             [hub_btn("🎮 PLAY NOW")],
             [Btn(text="🕹 All Games", callback_data="m:games"), Btn(text="👤 Profile", callback_data="m:profile")],
             [Btn(text="🏆 Leaderboard", callback_data="m:top"), Btn(text="🎁 Daily Bonus", callback_data="m:daily")],
@@ -219,11 +222,11 @@ def build(settings, db, rooms):
                     pass
         if m.chat.type != ChatType.PRIVATE:
             return await m.answer(f"👋 Hi! Send /games to see every game, or tap below.", reply_markup=Kb(inline_keyboard=[[hub_btn()]]))
-        await send_banner(m.chat.id, welcome_text(u), main_menu())
+        await send_banner(m.chat.id, welcome_text(u), main_menu(m.from_user.id))
 
     @r.callback_query(F.data == "m:home")
     async def cb_home(cb: CallbackQuery):
-        await show(cb, welcome_text(db.get_user(cb.from_user.id)), main_menu())
+        await show(cb, welcome_text(db.get_user(cb.from_user.id)), main_menu(cb.from_user.id))
 
     @r.callback_query(F.data == "m:games")
     async def cb_games(cb: CallbackQuery):
@@ -516,6 +519,7 @@ def build(settings, db, rooms):
             [Btn(text="📊 Stats", callback_data="ow:stats"), Btn(text="📢 Broadcast", callback_data="ow:bc")],
             [Btn(text="👥 Groups", callback_data="ow:chats"), Btn(text=f"🛡 Verification: {vd}", callback_data="ow:vf")],
             [Btn(text="🛠 Commands", callback_data="ow:help")],
+            [Btn(text="🖥 Open in Mini App", web_app=WebAppInfo(url=settings.webapp_url + "?owner=1"))],
         ])
 
     def stats_text() -> str:
@@ -527,10 +531,17 @@ def build(settings, db, rooms):
             f"🏠 Live rooms: {len(rooms.rooms)}\n💰 Coins in circulation: {s['coins_in_circulation']}"
         )
 
-    @r.message(Command("panel"))
+    @r.message(Command("id"))
+    async def my_id(m: Message):
+        await m.reply(f"🆔 Your Telegram id: <code>{m.from_user.id}</code>\nOwner? Put it in <code>ADMIN_IDS</code> in the server's .env, then restart.")
+
+    @r.message(Command("panel", "owner"))
     async def panel(m: Message):
         if not is_admin(m.from_user.id):
-            return
+            return await m.reply(
+                "🔒 Owner panel is for the bot owner only.\n"
+                f"If you are the owner: send /id, copy your number into <code>ADMIN_IDS</code> in .env and restart the bot."
+            )
         if m.chat.type != ChatType.PRIVATE:
             return await m.reply("Open the panel in my DM.")
         await m.answer(f"👑 <b>Owner panel</b> — {esc(settings.owner_name)}", reply_markup=panel_kb())

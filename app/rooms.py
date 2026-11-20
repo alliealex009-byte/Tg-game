@@ -6,6 +6,7 @@ All state lives in memory, so run a single server process.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import secrets
@@ -15,6 +16,7 @@ from .games import GAME_INFO, GAMES
 from .games.base import GameError
 
 log = logging.getLogger("rooms")
+ROOM_MEMORY_H = 24
 
 BOT_NAMES = ["Bot Ravi", "Bot Mia", "Bot Zed", "Bot Luna", "Bot Kai", "Bot Nova"]
 KICK_AFTER = 4   # consecutive turn timeouts before a human is removed from a running game
@@ -56,6 +58,9 @@ class Room:
         self.timer_token = 0
         self.chat: list[dict] = []
         self.last_chat: dict[int, float] = {}
+        self.watchers: dict[int, str] = {}   # spectators: uid -> name
+        self.last_react: dict[int, float] = {}
+        self.host_away_since = None
         self.touched = time.time()
 
     def player(self, uid):
@@ -82,6 +87,9 @@ class Room:
             "min_players": self.min_players, "max_players": self.max_players,
             "players": [p.public(bool(self.conns.get(p.uid)), p.uid in self.left) for p in self.players],
             "game": self.game.view(you) if self.game else None,
+            "watching": sum(1 for u in self.watchers if self.conns.get(u)),
+            "watchers": [{"uid": u, "name": n} for u, n in list(self.watchers.items()) if self.conns.get(u)][:12],
+            "spectator": self.player(you) is None,
             "time_left": tl, "turn_seconds": (getattr(self.game, "phase_seconds", None) or self.turn_seconds), "result": self.result,
         }
 
@@ -107,10 +115,42 @@ class RoomManager:
             code = secrets.token_hex(4).upper()
         room = Room(code, game_type, creator_id, bet, GAME_INFO[game_type].get("turn", self.s.turn_seconds))
         self.rooms[code] = room
+        try:   # remember the room so an invite link still works after a server restart
+            self.db.kv_set(f"room:{code}", json.dumps({"g": game_type, "c": creator_id, "b": bet, "t": time.time()}))
+        except Exception:
+            log.exception("could not persist room")
         return room
 
     def get(self, code):
-        return self.rooms.get((code or "").strip().upper())
+        code = (code or "").strip().upper()
+        room = self.rooms.get(code)
+        return room if room is not None else self._revive(code)
+
+    def _revive(self, code):
+        """Bring back an empty lobby for a room that vanished (restart / idle cleanup) so shared invites keep working."""
+        if not (3 <= len(code) <= 16) or not code.isalnum():
+            return None
+        try:
+            rec = json.loads(self.db.kv_get(f"room:{code}") or "null")
+            if not isinstance(rec, dict) or time.time() - float(rec["t"]) > ROOM_MEMORY_H * 3600 or rec["g"] not in GAMES:
+                return None
+            room = Room(code, rec["g"], int(rec["c"]), int(rec["b"]), GAME_INFO[rec["g"]].get("turn", self.s.turn_seconds))
+        except (ValueError, KeyError, TypeError):
+            return None
+        self.rooms[code] = room
+        return room
+
+    def _forget_old_rooms(self):
+        try:
+            for r in self.db.c.execute("SELECT k, v FROM kv WHERE k LIKE 'room:%'").fetchall():
+                try:
+                    old = time.time() - float(json.loads(r["v"])["t"]) > ROOM_MEMORY_H * 3600
+                except (ValueError, KeyError, TypeError):
+                    old = True
+                if old:
+                    self.db.c.execute("DELETE FROM kv WHERE k=?", (r["k"],))
+        except Exception:
+            log.exception("room memory cleanup failed")
 
     def _destroy(self, room: Room):
         self._cancel_timer(room)
@@ -120,9 +160,11 @@ class RoomManager:
         while True:
             await asyncio.sleep(60)
             now = time.time()
+            if int(now // 60) % 60 == 0:
+                self._forget_old_rooms()
             for room in list(self.rooms.values()):
                 idle = now - room.touched
-                if (not room.conns and idle > 600) or idle > 6 * 3600:
+                if (not room.conns and idle > 4 * 3600) or idle > 8 * 3600:
                     self._destroy(room)
 
     # ---------- connections ----------
@@ -136,6 +178,9 @@ class RoomManager:
             room.players.append(Player(uid, user["name"], user.get("username"), user.get("photo"), coins=user["coins"]))
         elif p is not None:
             p.name, p.photo, p.coins = user["name"], user.get("photo") or p.photo, user["coins"]
+            room.watchers.pop(uid, None)
+        else:  # game running or room full: watch instead of being turned away
+            room.watchers[uid] = user["name"]
         room.conns.setdefault(uid, set()).add(ws)
         await self.broadcast(room)
 
@@ -145,6 +190,7 @@ class RoomManager:
             s.discard(ws)
             if not s:
                 room.conns.pop(uid, None)
+                room.watchers.pop(uid, None)
         room.touched = time.time()
         if room.code in self.rooms:
             await self.broadcast(room)
@@ -186,6 +232,10 @@ class RoomManager:
             await self.rematch(room, uid)
         elif t == "chat":
             await self.chat(room, uid, msg.get("text"))
+        elif t == "react":
+            await self.react(room, uid, msg.get("e"))
+        elif t == "sit":
+            await self.sit(room, uid)
         elif isinstance(t, str):  # anything else is a game action; the engine validates it
             await self.action(room, uid, msg)
         else:
@@ -278,6 +328,55 @@ class RoomManager:
         for p in room.players:
             p.afk_count, p.afk = 0, False
         await self.broadcast(room)
+
+    REACTIONS = ("😂", "🔥", "👏", "😮", "😡", "❤️", "👍", "😭", "🎉", "🤯", "💀", "🙏")
+
+    async def react(self, room, uid, e):
+        if e not in self.REACTIONS:
+            return
+        now = time.time()
+        if now - room.last_react.get(uid, 0) < 0.35:
+            return
+        room.last_react[uid] = now
+        p = room.player(uid)
+        name = p.name if p else room.watchers.get(uid, "Viewer")
+        await self._broadcast_raw(room, {"t": "react", "uid": uid, "name": name, "e": e})
+
+    async def sit(self, room, uid):
+        """A spectator takes a free seat while the room is in the lobby."""
+        if room.player(uid) is not None:
+            return
+        if room.status != "lobby":
+            raise GameError("Wait for the next round to take a seat")
+        if len(room.players) >= room.max_players:
+            raise GameError("The room is full")
+        u = self.db.get_user(uid)
+        if room.bet and u["coins"] < room.bet:
+            raise GameError(f"You need {room.bet} coins to join this room")
+        room.players.append(Player(uid, u["name"], u.get("username"), u.get("photo"), coins=u["coins"]))
+        room.watchers.pop(uid, None)
+        await self.broadcast(room)
+
+    async def host_watch(self):
+        """If the host has been offline for 70 s, hand the room to another connected player."""
+        while True:
+            await asyncio.sleep(5)
+            now = time.time()
+            for room in list(self.rooms.values()):
+                if room.status == "playing":
+                    room.host_away_since = None
+                    continue
+                h = room.host_id()
+                if h is None or room.conns.get(h) or not any(not p.is_bot and room.conns.get(p.uid) for p in room.players):
+                    room.host_away_since = None
+                    continue
+                room.host_away_since = room.host_away_since or now
+                if now - room.host_away_since >= 70:
+                    new = next((p for p in room.players if not p.is_bot and p.uid != h and room.conns.get(p.uid)), None)
+                    if new:
+                        room.creator_id, room.host_away_since = new.uid, None
+                        await self.broadcast(room)
+                        await self._broadcast_raw(room, {"t": "toast", "msg": f"👑 {new.name} is the new host (old host was away)"})
 
     async def chat(self, room, uid, text):
         if not isinstance(text, str):
@@ -376,15 +475,23 @@ class RoomManager:
                 room.deadline = time.monotonic() + delay
             room.phase_id = pid
             room.deadline = time.monotonic() + delay
+        kind = "phase"
+        due = g.bot_due() if hasattr(g, "bot_due") and not p.is_bot and not p.afk else None
+        if due is not None and due < delay:       # a bot has something to do before the phase deadline
+            delay, kind = max(0.05, due + 0.02), "bot"
         room.timer_token += 1
-        room.timer_task = asyncio.create_task(self._timer(room, delay, room.timer_token))
+        room.timer_task = asyncio.create_task(self._timer(room, delay, room.timer_token, kind))
 
-    async def _timer(self, room, delay, token):
+    async def _timer(self, room, delay, token, kind="phase"):
         try:
             await asyncio.sleep(delay)
             if room.timer_token != token or room.status != "playing":
                 return
             room.timer_task = None  # we are the running task; don't let _schedule cancel us
+            if kind == "bot":
+                room.game.bot_event()
+                await self._after(room)
+                return
             uid = room.game.current()
             p = room.player(uid)
             if p is not None and not p.is_bot and not getattr(room.game, "ticker", False):

@@ -18,7 +18,11 @@ from fastapi.staticfiles import StaticFiles
 from .auth import AuthError, user_from_init_data
 from .config import load_settings
 from .db import DB
+from . import broadcast as bcast
+from .arcade import Arcade
+from .idle import Idle
 from .games import GAME_INFO, GAMES
+from .howto import ARCADE_TIPS, HOWTO
 from .games.base import GameError
 from .rooms import RoomManager
 
@@ -28,6 +32,8 @@ log = logging.getLogger("server")
 settings = load_settings()
 db = DB(settings.db_path, settings.starting_coins, settings.daily_bonus)
 rooms = RoomManager(db, settings)
+arcade = Arcade(db)
+idle = Idle(arcade)
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "webapp")
 BETS = [0, 50, 100, 500, 1000]
 
@@ -35,7 +41,21 @@ BETS = [0, 50, 100, 500, 1000]
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.bot_username = ""
-    tasks = [asyncio.create_task(rooms.janitor())]
+    app.state.bot = None
+    tasks = [asyncio.create_task(rooms.janitor()), asyncio.create_task(rooms.host_watch())]
+    mongo = None
+    if settings.mongo_uri:
+        try:
+            from .mongo_sync import MongoSync, connect
+
+            mongo = MongoSync(db, await asyncio.to_thread(connect, settings.mongo_uri, settings.mongo_db))
+            await asyncio.to_thread(mongo.restore)
+            await asyncio.to_thread(mongo.flush)
+            tasks.append(asyncio.create_task(mongo.run()))
+            log.info("MongoDB sync on (database %s)", settings.mongo_db)
+        except Exception:
+            log.exception("MongoDB unavailable, continuing with SQLite only (check MONGO_URI)")
+            mongo = None
     bot = None
     if settings.bot_token:
         try:
@@ -44,6 +64,7 @@ async def lifespan(app: FastAPI):
             bot, dp, ctx = build(settings, db, rooms)
             await prepare(bot, settings, ctx)
             app.state.bot_username = ctx["username"]
+            app.state.bot = bot
             tasks.append(
                 asyncio.create_task(
                     dp.start_polling(bot, handle_signals=False, allowed_updates=dp.resolve_used_update_types())
@@ -59,6 +80,9 @@ async def lifespan(app: FastAPI):
     yield
     for t in tasks:
         t.cancel()
+    if mongo:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(mongo.flush)
     if bot:
         with contextlib.suppress(Exception):
             await bot.session.close()
@@ -107,13 +131,16 @@ async def config():
         "dev": settings.dev_mode,
         "owner": {"name": settings.owner_name, "username": settings.owner_username},
         "sister": settings.sister_bot,
+        "howto": HOWTO,
+        "arcade_tips": ARCADE_TIPS,
+        "version": "2.1",
     }
 
 
 @app.post("/api/me")
 async def me(request: Request):
     u = auth_user(request)
-    return {"user": public_user(u), "daily_wait": db.daily_wait(u["id"])}
+    return {"user": public_user(u), "daily_wait": db.daily_wait(u["id"]), "is_admin": u["id"] in settings.admin_ids}
 
 
 @app.post("/api/daily")
@@ -153,7 +180,7 @@ async def ws_endpoint(ws: WebSocket):
             raw = await ws.receive_text()
             now = time.monotonic()
             window = [x for x in window if now - x < 5] + [now]
-            if len(window) > 40:
+            if len(window) > 120:
                 await ws.send_json({"t": "error", "fatal": True, "msg": "Too many requests"})
                 break
             if len(raw) > 2000:
@@ -206,6 +233,135 @@ async def ws_endpoint(ws: WebSocket):
             await rooms.disconnect(room, uid, ws)
         with contextlib.suppress(Exception):
             await ws.close()
+
+
+async def body(request: Request) -> dict:
+    try:
+        d = await request.json()
+    except Exception:
+        raise HTTPException(400, "Bad request")
+    if not isinstance(d, dict):
+        raise HTTPException(400, "Bad request")
+    return d
+
+
+def arc_call(fn, *a):
+    try:
+        return fn(*a)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/arcade/start")
+async def arcade_start(request: Request):
+    u, d = auth_user(request), await body(request)
+    arc_call(arcade.start, u["id"], d.get("game"))
+    return {"ok": True, "left": arcade.left_today(u["id"])}
+
+
+@app.post("/api/arcade/claim")
+async def arcade_claim(request: Request):
+    u, d = auth_user(request), await body(request)
+    return arc_call(arcade.claim, u["id"], d.get("game"), d.get("score"))
+
+
+@app.post("/api/tap")
+async def tap(request: Request):
+    u, d = auth_user(request), await body(request)
+    if d.get("n") is None:
+        return arcade.tap_state(u["id"])
+    return arc_call(arcade.tap, u["id"], d.get("n"))
+
+
+@app.post("/api/tap/upgrade")
+async def tap_upgrade(request: Request):
+    u = auth_user(request)
+    return arc_call(arcade.tap_upgrade, u["id"])
+
+
+@app.post("/api/farm")
+async def farm(request: Request):
+    u, d = auth_user(request), await body(request)
+    if not d.get("action"):
+        return arcade.farm_state(u["id"])
+    return arc_call(arcade.farm_act, u["id"], d.get("idx"), d.get("action"))
+
+
+@app.post("/api/idle/{kind}")
+async def idle_api(kind: str, request: Request):
+    u, d = auth_user(request), await body(request)
+    if not d.get("action"):
+        return arc_call(idle.state, kind, u["id"])
+    return arc_call(idle.act, kind, u["id"], d.get("action"), d.get("arg"))
+
+
+def owner_user(request: Request) -> dict:
+    u = auth_user(request)
+    if u["id"] not in settings.admin_ids:
+        raise HTTPException(403, "Owner only")
+    return u
+
+
+@app.post("/api/owner/stats")
+async def owner_stats(request: Request):
+    owner_user(request)
+    st = db.stats()
+    st["live_rooms"] = len(rooms.rooms)
+    st["online"] = sum(len(r.conns) for r in rooms.rooms.values())
+    return st
+
+
+@app.post("/api/owner/user")
+async def owner_user_action(request: Request):
+    owner_user(request)
+    d = await body(request)
+    uid, act = d.get("uid"), d.get("action")
+    if isinstance(uid, bool) or not isinstance(uid, int) or uid in settings.admin_ids and act == "ban":
+        raise HTTPException(400, "Bad user id")
+    if db.get_user(uid) is None:
+        raise HTTPException(404, "Unknown user id")
+    if act in ("ban", "unban"):
+        db.set_ban(uid, act == "ban")
+    elif act == "coins":
+        amt = d.get("amount")
+        if isinstance(amt, bool) or not isinstance(amt, int) or abs(amt) > 10**7 or db.add_coins(uid, amt, "owner") is None:
+            raise HTTPException(400, "Bad amount")
+    elif act != "info":
+        raise HTTPException(400, "Bad action")
+    u = db.get_user(uid)
+    return {"id": uid, "name": u["name"], "username": u["username"], "coins": u["coins"], "games": u["games"], "wins": u["wins"], "banned": bool(u["banned"])}
+
+
+@app.post("/api/owner/broadcast")
+async def owner_broadcast(request: Request):
+    owner_user(request)
+    d = await body(request)
+    text, kind = d.get("text"), d.get("target", "users")
+    if not isinstance(text, str) or not text.strip() or len(text) > 3500 or kind not in ("users", "groups", "all"):
+        raise HTTPException(400, "Bad broadcast")
+    bot = app.state.bot
+    if bot is None:
+        raise HTTPException(503, "Bot is not running")
+    targets = (db.user_ids() if kind in ("users", "all") else []) + (db.chat_ids() if kind in ("groups", "all") else [])
+
+    async def send(t):
+        try:
+            await bot.send_message(t, text)
+            return "ok"
+        except Exception as e:  # classify by name so we don't import aiogram here
+            n = type(e).__name__
+            if n == "TelegramRetryAfter":
+                return ("retry", getattr(e, "retry_after", 3))
+            return "blocked" if n == "TelegramForbiddenError" else ("gone" if n == "TelegramBadRequest" else "fail")
+
+    async def job():
+        res = await bcast.run(targets, send, 0.05)
+        for t in res["blocked_ids"] + res["gone_ids"]:
+            db.mark_dm(t, False) if t > 0 else db.set_chat_active(t, False)
+        log.info("broadcast finished: %s", {k: v for k, v in res.items() if not k.endswith("_ids")})
+
+    asyncio.create_task(job())
+    return {"queued": len(targets)}
 
 
 # Mounted last so the API routes above win.
