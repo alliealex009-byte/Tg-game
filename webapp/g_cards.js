@@ -27,16 +27,24 @@
   /* ---------- flying card between two elements ---------- */
   async function fly(from, to, html, ms) {
     if (!from || !to) return;
+    ms = ms || 300;
     const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
     const el = document.createElement("div");
     el.className = "gc-fly"; el.innerHTML = html;
     el.style.left = a.left + a.width / 2 - 28 + "px"; el.style.top = a.top + a.height / 2 - 42 + "px";
     document.body.appendChild(el);
-    void el.offsetWidth;
-    el.style.transition = `transform ${ms || 380}ms cubic-bezier(.2,.8,.3,1)`;
-    el.style.transform = `translate(${b.left + b.width / 2 - a.left - a.width / 2}px,${b.top + b.height / 2 - a.top - a.height / 2}px) rotate(${(Math.random() * 24 - 12) | 0}deg)`;
-    await sleep((ms || 380) + 20);
+    const dx = b.left + b.width / 2 - a.left - a.width / 2, dy = b.top + b.height / 2 - a.top - a.height / 2;
+    const rot = (Math.random() * 20 - 10) | 0;
+    from.style.visibility = "hidden";  // the card leaves its slot instead of being copied
+    try {
+      await el.animate([
+        { transform: "translate(0,0) scale(1) rotate(0deg)" },
+        { transform: `translate(${dx * 0.5}px,${dy * 0.5 - 18}px) scale(1.12) rotate(${rot / 2}deg)`, offset: 0.5 },
+        { transform: `translate(${dx}px,${dy}px) scale(1) rotate(${rot}deg)` },
+      ], { duration: ms, easing: "cubic-bezier(.3,.7,.3,1)", fill: "forwards" }).finished;
+    } catch (e) { /* cancelled */ }
     el.remove();
+    from.style.visibility = "";
   }
   const chipEl = (uid) => document.querySelector(`#screen-game .pchip[data-uid="${uid}"]`);
 
@@ -64,7 +72,8 @@
     ui.handKey = key;
     if (!K().iAmPlaying(s)) { box.innerHTML = '<div class="gc-spec">👁 Watching</div>'; return; }
     const sorted = kind === "gofish" ? hand.slice().sort((a, b) => RORD.indexOf(a.slice(0, -1)) - RORD.indexOf(b.slice(0, -1))) : hand;
-    box.innerHTML = '<div class="gc-fan">' + sorted.map((c) => {
+    const n = sorted.length, step = n > 1 ? Math.min(62, (Math.min(window.innerWidth, 440) - 90) / (n - 1)) : 0;
+    box.innerHTML = `<div class="gc-fan" style="--ov:${(step - 56).toFixed(1)}px">` + sorted.map((c) => {
       const ok = !opts || !opts.playable || play.has(c);
       return `<div class="gc-slot ${mine && ok ? "can" : mine ? "no" : ""}">${face(kind === "uno" ? "uno" : "std", c)}</div>`;
     }).join("") + "</div>";

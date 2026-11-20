@@ -1,0 +1,63 @@
+/* Mafia, Hangman, Mastermind, Trivia (classes prefixed gp-) */
+.gp-btn{background:linear-gradient(#ffd24a,#f5a623);color:#2a1a00;border:0;border-radius:14px;padding:11px 22px;font-weight:800;font-size:15px;box-shadow:0 3px 0 #b87400}
+.gp-btn:active{transform:translateY(2px);box-shadow:0 1px 0 #b87400}.gp-btn.ghost{background:#2a2a30;color:#fff;box-shadow:none;border:1px solid var(--line)}
+.gp-btn:disabled{opacity:.4}.gp-wait{color:var(--muted)}.hidden{display:none!important}
+.gp-acts{display:flex;gap:10px;justify-content:center;margin:8px 0;min-height:10px}
+.gp-meta{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);padding:0 6px 6px}
+.gp-time{height:6px;background:#2a2a30;border-radius:6px;overflow:hidden;margin:4px 6px}.gp-time i{display:block;height:100%;width:0;background:linear-gradient(90deg,#4ade80,#ffd24a);transition:width .15s linear}.gp-time i.low{background:#ff5a5a}
+.gp-banner{position:fixed;left:50%;top:38%;transform:translate(-50%,-50%);z-index:90;background:#000d;color:#fff;border:1px solid #fff3;border-radius:20px;padding:18px 26px;text-align:center;font-size:18px;line-height:1.5;animation:gpin .35s cubic-bezier(.2,1.4,.4,1);max-width:86vw}
+.gp-banner.out{opacity:0;transition:opacity .3s}.gp-banner small{color:#cfd3dc;font-size:13px}
+@keyframes gpin{from{transform:translate(-50%,-30%) scale(.7);opacity:0}}
+/* ---- mafia ---- */
+.gp-mafia{border-radius:20px;padding:10px 8px 14px;transition:background .8s,color .8s;position:relative;overflow:hidden}
+.gp-mafia.night{background:linear-gradient(#0b1030,#1a1f4a 60%,#10142e);color:#e8ebff}
+.gp-mafia.day{background:linear-gradient(#78c6ff,#bfe6ff 55%,#f7e7b4);color:#16202e}
+.gp-sky{height:46px;position:relative}.gp-orb{position:absolute;left:50%;top:0;transform:translateX(-50%);font-size:42px;filter:drop-shadow(0 0 14px #fff8);animation:gpfloat 4s ease-in-out infinite}
+@keyframes gpfloat{50%{transform:translate(-50%,6px)}}
+.gp-phase{text-align:center;font-weight:800;font-size:17px;margin:2px 0 6px}
+.gp-mafia .gp-time{background:#0003}
+.gp-role{display:flex;justify-content:center;margin:6px 0}.gp-spec{font-size:13px;opacity:.8}
+.gp-card{width:230px;height:92px;perspective:700px;cursor:pointer}.gp-card .in{position:relative;width:100%;height:100%;transition:transform .7s;transform-style:preserve-3d}
+.gp-card.flip .in{transform:rotateY(180deg)}.gp-card .f{position:absolute;inset:0;backface-visibility:hidden;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:6px;font-size:22px}
+.gp-card .front{background:linear-gradient(135deg,#5b2a86,#2a2a60);color:#fff}.gp-card .back{transform:rotateY(180deg);background:#fff;color:#1b1b22;font-size:17px}
+.gp-card small{font-size:11px;opacity:.85;line-height:1.25;font-weight:400}
+.gp-say{text-align:center;font-weight:700;margin:6px 4px;min-height:22px}
+.gp-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:4px}
+.gp-tile{position:relative;background:#ffffff18;border:2px solid #ffffff30;border-radius:16px;padding:8px 4px;color:inherit;display:flex;flex-direction:column;align-items:center;gap:2px;transition:transform .15s,border-color .15s}
+.gp-mafia.day .gp-tile{background:#ffffffaa;border-color:#0002}
+.gp-tile b{font-size:13px}.gp-tile small{font-size:11px;opacity:.8}
+.gp-tile.can{border-color:#ffd24a;animation:gppulse 1.3s infinite}.gp-tile.sel{background:#ffd24a55;border-color:#ffd24a;transform:scale(1.04)}.gp-tile.me{outline:2px solid #4aa8ff}
+.gp-tile:disabled{opacity:1}.gp-tile.dead{filter:grayscale(1);opacity:.45}.gp-tile .av{position:relative}.gp-tile .avatar{width:44px;height:44px;border-radius:50%;overflow:hidden;background:#333;display:flex;align-items:center;justify-content:center}
+.gp-tile .x{position:absolute;right:-4px;bottom:-4px;font-style:normal;font-size:16px;color:#ff5a5a}
+.gp-tile.dying{animation:gpdie 1s forwards}
+@keyframes gpdie{30%{transform:scale(1.15) rotate(-6deg);background:#ff3b3b88}100%{transform:scale(.9);filter:grayscale(1);opacity:.45}}
+@keyframes gppulse{50%{box-shadow:0 0 0 5px #ffd24a33}}
+.gp-votes{position:absolute;top:4px;right:6px;background:#ff5a5a;color:#fff;border-radius:10px;padding:0 7px;font-size:12px;font-weight:800;min-width:20px;text-align:center}
+.gp-mark{position:absolute;top:2px;left:4px;font-size:14px}
+.gp-notes{margin:8px 4px 0;font-size:13px;line-height:1.5}
+/* ---- hangman ---- */
+.gp-hang{display:flex;flex-direction:column;align-items:center;gap:6px}.gp-hang .gp-meta{width:100%}
+.gp-gal{width:min(220px,60vw);height:auto}.gp-part{opacity:0;transform-origin:115px 50px}.gp-part.on{opacity:1;animation:gppart .4s ease-out}
+@keyframes gppart{from{opacity:0;transform:scale(.3)}}
+.gp-word{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:4px 0}.gp-word span{width:30px;height:40px;border-bottom:3px solid #ffd24a;font-size:26px;font-weight:800;text-align:center;line-height:40px}
+.gp-word span.pop{animation:gppop .4s cubic-bezier(.2,1.6,.4,1)}@keyframes gppop{from{transform:scale(.2) translateY(10px);opacity:0}}
+.gp-kb{display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:6px}.gp-kb>div{display:flex;gap:5px}
+.gp-key{width:32px;height:42px;border-radius:9px;border:0;background:#3a3a44;color:#fff;font-size:17px;font-weight:700;text-transform:uppercase;box-shadow:0 2px 0 #1a1a1f}
+.gp-key:active{transform:translateY(2px)}.gp-key:disabled{opacity:.35}.gp-key.hit{background:#2e9e5b;opacity:1}.gp-key.miss{background:#8a2f2f;opacity:.6}
+/* ---- mastermind ---- */
+.gp-mind{display:flex;flex-direction:column;align-items:center;gap:8px}.gp-secret{min-height:20px;font-size:13px;display:flex;align-items:center;gap:4px}
+.gp-boards{display:flex;gap:14px;justify-content:center}.gp-col{background:#ffffff0c;border-radius:14px;padding:6px 8px;border:2px solid transparent}.gp-col.turn{border-color:#4ade80}
+.gp-col h5{margin:0 0 4px;text-align:center;font-size:12px;color:var(--muted)}
+.gp-row{display:flex;align-items:center;gap:4px;height:23px}.gp-row .n{width:14px;font-size:10px;color:var(--muted);text-align:right}
+.gp-row.empty{opacity:.35}.gp-row.new{animation:gppop .4s}
+.gp-dot{width:17px;height:17px;border-radius:50%;border:1.5px solid #fff3;box-shadow:inset 0 -3px 4px #0004,inset 0 2px 3px #fff5;display:inline-block}
+.gp-fbs{display:grid;grid-template-columns:repeat(2,8px);gap:2px;margin-left:4px}.gp-fb{width:8px;height:8px;border-radius:50%;background:#2a2a30;display:block}.gp-fb.b{background:#111;box-shadow:0 0 0 1px #fff}.gp-fb.w{background:#fff}
+.gp-guess{display:flex;gap:10px;margin-top:4px}.gp-slot{width:44px;height:44px;border-radius:50%;border:2px dashed #fff4;transition:transform .15s}.gp-slot.on{border-style:solid;animation:gppop .25s}
+.gp-pal{display:flex;gap:9px}.gp-pc{width:40px;height:40px;border-radius:50%;border:2px solid #fff5;box-shadow:inset 0 -4px 6px #0004,inset 0 3px 4px #fff6}.gp-pc:active{transform:scale(.88)}.gp-pc:disabled{opacity:.35}
+/* ---- trivia ---- */
+.gp-trv{display:flex;flex-direction:column;gap:8px}.gp-qtext{font-size:19px;font-weight:700;text-align:center;padding:14px 10px;background:#ffffff10;border-radius:16px;min-height:74px;display:flex;align-items:center;justify-content:center;line-height:1.3}
+.gp-opts{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.gp-opt{display:flex;align-items:center;gap:8px;text-align:left;background:#2c2c36;color:#fff;border:2px solid #ffffff22;border-radius:14px;padding:12px 10px;font-size:15px;min-height:62px;transition:transform .12s,background .2s}
+.gp-opt b{background:#ffd24a;color:#2a1a00;border-radius:8px;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;flex:none;font-size:13px}
+.gp-opt:active:not(:disabled){transform:scale(.96)}.gp-opt.mine{border-color:#4aa8ff;background:#1f3a5c}.gp-opt.right{background:#1f7a46;border-color:#4ade80;animation:gppop .4s}.gp-opt.wrong{background:#7a2323;border-color:#ff5a5a}.gp-opt.dim{opacity:.4}
+.gp-ans{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;min-height:28px}.gp-chip{background:#2c2c36;border-radius:12px;padding:3px 10px;font-size:12px}.gp-chip.ok{background:#1f5a38}.gp-chip.no{background:#5a2323}.gp-chip.pop{animation:gppop .4s}

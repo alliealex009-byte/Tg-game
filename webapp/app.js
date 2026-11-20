@@ -134,39 +134,87 @@
     cash() { [1318, 1568, 2093].forEach((f, i) => tone(f, 0.12, "triangle", 0.15, i * 0.06)); },
   };
 
+  /* ---------- quiet background ambience for a few games (never Ludo or Carrom) ---------- */
+  const AMBIENT = { chess: "calm", checkers: "calm", gomoku: "calm", reversi: "calm", mancala: "calm", dominoes: "calm", wordle: "calm", uttt: "calm",
+    tank: "wind", race: "engine", telearena: "dark", quest: "dark", mafia: "dark" };
+  let amb = null;
+  function ambStop() {
+    if (!amb) return;
+    const a = amb; amb = null;
+    try { a.g.gain.cancelScheduledValues(0); a.g.gain.setTargetAtTime(0.0001, a.c.currentTime, 0.25); setTimeout(() => { a.nodes.forEach((n) => { try { n.stop(); } catch (e) { /* ignore */ } }); try { a.g.disconnect(); } catch (e) { /* ignore */ } }, 900); } catch (e) { /* ignore */ }
+  }
+  function ambStart(kind) {
+    if (!S.sound) return ambStop();
+    if (amb && amb.kind === kind) return;
+    ambStop();
+    const c = audio(); if (!c) return;
+    try {
+      const g = c.createGain(); g.gain.value = 0.0001; g.connect(master);
+      const nodes = [], lfo = c.createOscillator(), lg = c.createGain(); lfo.frequency.value = 0.15; lg.gain.value = 0.35; lfo.connect(lg); nodes.push(lfo);
+      const mk = (type, f) => { const o = c.createOscillator(); o.type = type; o.frequency.value = f; nodes.push(o); return o; };
+      let vol = 0.03;
+      if (kind === "calm" || kind === "dark") {
+        const f = kind === "calm" ? [110, 164.8, 220.4] : [98, 116.5, 147];
+        f.forEach((hz) => { const o = mk("sine", hz), og = c.createGain(); og.gain.value = 0.33; o.connect(og); og.connect(g); lg.connect(og.gain); });
+        if (kind === "dark") vol = 0.035;
+      } else if (kind === "wind") {
+        const src = c.createBufferSource(), f = c.createBiquadFilter(), fg = c.createGain(); src.buffer = noiseBuf; src.loop = true; f.type = "lowpass"; f.frequency.value = 420; fg.gain.value = 0.7;
+        src.connect(f); f.connect(fg); fg.connect(g); lg.connect(fg.gain); nodes.push(src); vol = 0.05;
+      } else if (kind === "engine") {
+        const o = mk("sawtooth", 62), o2 = mk("sawtooth", 63.5), f = c.createBiquadFilter(), fg = c.createGain(); f.type = "lowpass"; f.frequency.value = 180; fg.gain.value = 0.5;
+        o.connect(f); o2.connect(f); f.connect(fg); fg.connect(g); lg.connect(fg.gain); vol = 0.03;
+      }
+      nodes.forEach((n) => n.start());
+      g.gain.setTargetAtTime(vol, c.currentTime, 0.8);
+      amb = { kind, g, c, nodes };
+    } catch (e) { amb = null; }
+  }
+  sfx.ambient = (gameType, playing) => { const k = AMBIENT[gameType]; if (k && playing) ambStart(k); else ambStop(); };
+  sfx.ambientOff = ambStop;
+  document.addEventListener("visibilitychange", () => { if (document.hidden) ambStop(); });
+
   /* dice tumble: cycles random faces with a spin, then settles on the real value */
+  const PIPS = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
+  // cube faces: front=1 back=6 right=2 left=5 top=3 bottom=4 (opposite faces add up to 7)
+  const FACE = { 1: ["", 1], 6: ["rotateY(180deg)", 6], 2: ["rotateY(90deg)", 2], 5: ["rotateY(-90deg)", 5], 3: ["rotateX(90deg)", 3], 4: ["rotateX(-90deg)", 4] };
+  const SHOW = { 1: [0, 0], 6: [0, 180], 2: [0, -90], 5: [0, 90], 3: [-90, 0], 4: [90, 0] };  // [rotateX, rotateY] that bring a face to the front
   async function tumble(el, value, ms) {
     if (!el) return;
-    ms = ms || 900;
+    ms = ms || 1100;
     sfx.roll();
-    el.innerHTML = diceHTML(1 + Math.floor(Math.random() * 6));
-    const d = el.querySelector(".dice");
-    if (!d) return;
-    el.style.perspective = "260px";
-    const pips = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
-    const face = (v) => d.querySelectorAll("i").forEach((e, i) => e.classList.toggle("on", pips[v].includes(i)));
-    let anim = null;
+    const S = Math.max(28, Math.round(el.clientWidth || 44)), h = S / 2;
+    el.style.overflow = "visible"; el.style.zIndex = "40";
+    el.innerHTML = `<div class="d3scene" style="width:${S}px;height:${S}px"><div class="d3cube" style="width:${S}px;height:${S}px">` +
+      Object.values(FACE).map(([t, v]) => `<div class="d3face" style="transform:${t} translateZ(${h}px)">${[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => `<i class="${PIPS[v].includes(i) ? "on" : ""}"></i>`).join("")}</div>`).join("") + "</div></div>";
+    const scene = el.firstChild, cube = scene.firstChild;
+    const [fx, fy] = SHOW[value];
+    const r = () => (Math.random() * 2 - 1);
+    const ax = (n) => Math.round(n * 360 + r() * 40), sgn = Math.random() < 0.5 ? 1 : -1;
+    let a1 = null, a2 = null;
     try {
-      anim = d.animate([
-        { transform: "translateY(0) rotateX(0) rotateY(0) rotateZ(0) scale(1)" },
-        { transform: "translateY(-30%) rotateX(300deg) rotateY(160deg) rotateZ(80deg) scale(1.2)", offset: 0.33 },
-        { transform: "translateY(0) rotateX(640deg) rotateY(340deg) rotateZ(200deg) scale(.96)", offset: 0.66 },
-        { transform: "translateY(-8%) rotateX(900deg) rotateY(520deg) rotateZ(330deg) scale(1.06)", offset: 0.86 },
-        { transform: "translateY(0) rotateX(1080deg) rotateY(720deg) rotateZ(360deg) scale(1)" },
-      ], { duration: ms, easing: "cubic-bezier(.22,.7,.3,1)" });
-    } catch (e) { /* no WAAPI: faces still change */ }
-    const t0 = performance.now();
-    let wait = 40, last = 0;
-    while (performance.now() - t0 < ms - 140) {
-      let f = 1 + Math.floor(Math.random() * 6);
-      if (f === last) f = (f % 6) + 1;
-      last = f; face(f);
-      await sleep(wait); wait = Math.min(wait * 1.2, 160);
-    }
-    face(value);
-    if (anim) { try { await anim.finished; } catch (e) { /* cancelled */ } }
-    el.style.perspective = "";
-    d.animate([{ transform: "scale(1.18)" }, { transform: "scale(.96)" }, { transform: "scale(1)" }], { duration: 220, easing: "ease-out" });
+      a1 = cube.animate([
+        { transform: `rotateX(${Math.round(r() * 90)}deg) rotateY(${Math.round(r() * 90)}deg) rotateZ(${Math.round(r() * 40)}deg)` },
+        { transform: `rotateX(${ax(1) * sgn}deg) rotateY(${ax(1)}deg) rotateZ(${Math.round(r() * 60)}deg)`, offset: 0.35 },
+        { transform: `rotateX(${ax(2) * sgn}deg) rotateY(${ax(2)}deg) rotateZ(${Math.round(r() * 60)}deg)`, offset: 0.7 },
+        { transform: `rotateX(${fx + 360 * 3 * sgn}deg) rotateY(${fy + 360 * 2}deg) rotateZ(0deg)` },
+      ], { duration: ms, easing: "cubic-bezier(.2,.7,.25,1)", fill: "forwards" });
+      a2 = scene.animate([
+        { transform: "translateY(0) scale(1)", filter: "drop-shadow(0 2px 2px #0007)" },
+        { transform: "translateY(-45%) scale(2.2)", filter: "drop-shadow(0 18px 8px #0006)", offset: 0.28 },
+        { transform: "translateY(-5%) scale(1.7)", filter: "drop-shadow(0 8px 5px #0006)", offset: 0.5 },
+        { transform: "translateY(-26%) scale(1.9)", filter: "drop-shadow(0 12px 6px #0006)", offset: 0.72 },
+        { transform: "translateY(0) scale(1.15)", filter: "drop-shadow(0 3px 3px #0007)", offset: 0.9 },
+        { transform: "translateY(0) scale(1)", filter: "drop-shadow(0 2px 2px #0007)" },
+      ], { duration: ms, easing: "ease-in-out", fill: "forwards" });
+    } catch (e) { /* no WAAPI */ }
+    // a soft clack when the dice lands
+    setTimeout(() => sfx.place(), Math.round(ms * 0.5));
+    setTimeout(() => sfx.place(), Math.round(ms * 0.72));
+    if (a1) { try { await a1.finished; } catch (e) { /* cancelled */ } }
+    el.innerHTML = diceHTML(value);   // identical flat face, so the rest of the UI stays consistent
+    el.style.zIndex = "";
+    const d = el.querySelector(".dice");
+    if (d) d.animate([{ transform: "scale(1.15)" }, { transform: "scale(.97)" }, { transform: "scale(1)" }], { duration: 200, easing: "ease-out" });
   }
 
   /* confetti burst */
@@ -214,6 +262,11 @@
       setTimeout(() => { if (!S.closing && S.code === code) openSocket(code); }, Math.min(5000, 700 * S.retry));
     };
   }
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden || !S.code || S.closing) return;
+    if (!S.ws || S.ws.readyState > 1) { S.retry = 0; openSocket(S.code); }
+    else if (S.ws.readyState === 1) send({ t: "ping" });
+  });
   function closeSocket() {
     S.closing = true;
     clearInterval(S.ping);
@@ -225,8 +278,10 @@
   function onMessage(m) {
     if (m.t === "state") return onState(m);
     if (m.t === "chat") return addChat(m);
+    if (m.t === "react") return HUB.onReact && HUB.onReact(m);
+    if (m.t === "toast") return toast(m.msg);
     if (m.t === "error") {
-      toast(m.msg);
+      toast(/not found|expired/i.test(m.msg || "") ? "This room has closed. Start a new game from the menu 👇" : m.msg);
       if (m.fatal) showHome();
     }
   }
@@ -261,8 +316,9 @@
     $("#chat").classList.add("hidden");
     showScreen("home");
     tgBack(false);
+    try { if (HUB.onHome) HUB.onHome(); } catch (e) { /* ignore */ }
     renderHome();
-    api("/api/me", { method: "POST" }).then((r) => { S.me = r.user; updateCoins(); }).catch(() => {});
+    api("/api/me", { method: "POST" }).then((r) => { S.me = r.user; S.isAdmin = !!r.is_admin; updateCoins(); }).catch(() => {});
     api("/api/leaderboard").then(renderLeaderboard).catch(() => {});
   }
   function updateCoins() { const c = $("#coins"); if (c && S.me) c.textContent = "💰 " + S.me.coins; }
@@ -281,22 +337,29 @@
         <div class="chips">${cfg.bets.map((b) => `<button class="chip ${b === S.bet ? "on" : ""}" data-bet="${b}">${b ? b : "Free"}</button>`).join("")}</div>
         <div style="color:var(--muted);font-size:12px;margin-top:8px">Winner takes the pot (house keeps ${cfg.rake}%). Coins are virtual.</div>
       </div>
-      <div class="card"><h3>Play</h3>
-        <div class="games">${Object.entries(cfg.games).map(([k, g]) => `
-          <button class="gcard" data-game="${k}"><div class="em">${g.emoji}</div><div class="t">${esc(g.title)}</div>
+      <div class="homeSec"><button class="btn gold" id="h-arcade">🕹 Arcade · earn coins</button>${S.isAdmin ? '<button class="btn" id="h-owner">👑 Owner</button>' : ""}</div>
+      <div class="card"><h3>Multiplayer games <span style="color:var(--muted);font-weight:400">(${Object.keys(cfg.games).length})</span></h3>
+        <div class="cats" id="cats">${["All", ...new Set(Object.values(cfg.games).map((g) => g.cat || "Classic"))].map((c) => `<button class="chip ${c === (S.cat || "All") ? "on" : ""}" data-cat="${c}">${c}</button>`).join("")}</div>
+        <div class="games">${Object.entries(cfg.games).filter(([, g]) => (S.cat || "All") === "All" || (g.cat || "Classic") === S.cat).map(([k, g]) => `
+          <button class="gcard" data-game="${k}"><span class="inf" data-info="${k}">ⓘ</span><div class="em">${g.emoji}</div><div class="t">${esc(g.title)}</div>
           <div class="s">${g.min === g.max ? g.min : g.min + "-" + g.max} players</div></button>`).join("")}</div>
       </div>
       <div class="card"><h3>Join with a code</h3>
         <form class="joinrow" id="joinform"><input id="joincode" maxlength="8" placeholder="ROOM CODE" autocomplete="off"><button class="btn primary">Join</button></form>
       </div>
       <div class="card"><h3>Top players</h3><ul class="lb" id="lb"><li><span class="rk">…</span></li></ul></div>
+      <div class="credits">🎮 <b>GAMELY</b> · Game Hub Bot<br>👑 Owner: ${esc(cfg.owner.name)} (<a href="https://t.me/${esc(cfg.owner.username)}">@${esc(cfg.owner.username)}</a>)<br>🤖 Sister bot: <a href="https://t.me/${esc(cfg.sister)}">@${esc(cfg.sister)}</a><br><span style="opacity:.6">v${esc(cfg.version || "")}</span></div>
     </div>`;
     const root = $("#screen-home");
-    root.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => {
+    root.querySelectorAll(".chip[data-bet]").forEach((c) => c.addEventListener("click", () => {
       S.bet = +c.dataset.bet;
-      root.querySelectorAll(".chip").forEach((x) => x.classList.toggle("on", x === c));
+      root.querySelectorAll(".chip[data-bet]").forEach((x) => x.classList.toggle("on", x === c));
     }));
-    root.querySelectorAll(".gcard").forEach((c) => c.addEventListener("click", async () => {
+    root.querySelectorAll("[data-cat]").forEach((c) => c.addEventListener("click", () => { S.cat = c.dataset.cat; renderHome(); api("/api/leaderboard").then(renderLeaderboard).catch(() => {}); }));
+    const ar = $("#h-arcade"); if (ar) ar.addEventListener("click", () => HUB.openArcade());
+    const ow = $("#h-owner"); if (ow) ow.addEventListener("click", () => HUB.openOwner());
+    root.querySelectorAll(".gcard").forEach((c) => c.addEventListener("click", async (ev) => {
+      if (ev.target.dataset.info) { ev.stopPropagation(); return HUB.showHowto(ev.target.dataset.info); }
       try {
         const r = await api("/api/room", { method: "POST", body: { game: c.dataset.game, bet: S.bet } });
         joinRoom(r.code);
@@ -332,8 +395,24 @@
     return location.origin + "/?room=" + code;
   }
   function share(code, title) {
-    const u = "https://t.me/share/url?url=" + encodeURIComponent(shareLink(code)) + "&text=" + encodeURIComponent("Join my " + title + " game! Room " + code);
-    if (tg && tg.openTelegramLink) tg.openTelegramLink(u); else window.open(u, "_blank");
+    const msgs = [
+      `🎮 Join my ${title} game! Room ${code}`,
+      `🔥 Think you can beat me at ${title}? Room ${code} is waiting!`,
+      `🏆 ${title} time! Tap the link and join room ${code}`,
+      `💰 Free coins + ${title} with friends. Room ${code}, come play!`,
+      `⚡ Quick! ${title} is about to start. Room ${code}`,
+    ];
+    const m = document.createElement("div"); m.className = "xmodal";
+    m.innerHTML = '<div class="xcard"><h3>📤 Send an invite</h3><div class="xlist">' + msgs.map((t, i) => `<button class="xitem" data-i="${i}"><span>${esc(t)}</span></button>`).join("") + "</div></div>";
+    m.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-i]");
+      if (b) {
+        const u = "https://t.me/share/url?url=" + encodeURIComponent(shareLink(code)) + "&text=" + encodeURIComponent(msgs[+b.dataset.i]);
+        if (tg && tg.openTelegramLink) tg.openTelegramLink(u); else window.open(u, "_blank");
+      }
+      if (b || e.target === m) m.remove();
+    });
+    document.body.appendChild(m);
   }
 
   function renderLobby(s) {
@@ -351,13 +430,16 @@
     $("#screen-lobby").innerHTML = `
     <div class="lobby">
       <h2>${s.emoji} ${esc(s.title)} Lobby</h2>
-      <div class="wait">${!inRoom ? "Room is full or already started — you are watching" : isHost ? "You are the host. Start when everyone is in." : "Waiting for Host to start…"}</div>
+      <div class="wait">${!inRoom ? "You are watching. Take a seat if there is one free" : isHost ? "You are the host. Start when everyone is in." : "Waiting for Host to start…"}</div>
       <div class="codebox"><span class="code">${s.code}</span>
         <button class="btn sm" id="copy">Copy</button><button class="btn sm" id="share">Share</button></div>
       <div style="color:var(--gold);font-weight:700;margin-bottom:12px">${s.bet ? "💰 Bet: " + s.bet + " coins each" : "Free game"}</div>
       <div class="plist">${rows.join("")}</div>
       ${canStart ? '<button class="btn primary block start" id="start">▶ START GAME</button>' : ""}
       ${isHost && !s.bet && s.players.length < s.max_players ? '<button class="btn block" id="addbot" style="margin-bottom:10px">🤖 Add computer player</button>' : ""}
+      ${!inRoom && s.players.length < s.max_players ? '<button class="btn primary block" id="sit" style="margin-bottom:10px">🪑 Take a seat</button>' : ""}
+      ${s.watching ? `<div class="wait">👁 ${s.watching} watching</div>` : ""}
+      <button class="btn block" id="howto" style="margin-bottom:10px">❓ How to play</button>
       <button class="btn block" id="leave">Leave room</button>
     </div>`;
     const root = $("#screen-lobby");
@@ -366,6 +448,8 @@
     on("#share", () => share(s.code, s.title));
     on("#start", () => send({ t: "start" }));
     on("#addbot", () => send({ t: "add_bot" }));
+    on("#sit", () => send({ t: "sit" }));
+    on("#howto", () => HUB.showHowto(s.game_type));
     on("#leave", leaveRoom);
     root.querySelectorAll("[data-rm]").forEach((b) => b.addEventListener("click", () => send({ t: "remove_bot", uid: +b.dataset.rm })));
   }
@@ -376,6 +460,7 @@
     S.lastV = s.v;
     S.room = s;
     S.queue = S.queue.then(() => process(s)).catch((e) => console.error(e));
+    try { if (HUB.afterState) HUB.afterState(s); } catch (e) { console.error(e); }
   }
 
   async function process(s) {
@@ -410,6 +495,8 @@
     $("#b-snd").addEventListener("click", (e) => {
       S.sound = !S.sound; localStorage.setItem("snd", S.sound ? "1" : "0");
       e.currentTarget.textContent = S.sound ? "🔊" : "🔇";
+      if (!S.sound) ambStop();
+      else if (S.room) sfx.ambient(S.room.game_type, S.room.status === "playing");
     });
     $("#b-exit").addEventListener("click", askLeave);
     $("#b-chat").addEventListener("click", () => { $("#chat").classList.remove("hidden"); renderChat(); });
@@ -598,7 +685,7 @@
         renderTokens(); updateLudoPanels(s);
         const seat = (g.players.find((p) => p.uid === g.last_roll.uid) || {}).seat;
         const dbx = ui.panelEls[seat] && ui.panelEls[seat].querySelector(".dicebox");
-        await tumble(dbx, g.last_roll.value, 900);
+        await tumble(dbx, g.last_roll.value, 1100);
         await sleep(120);
       }
       if (g.last_move && g.last_move.seq > ui.lastMoveSeq) {
@@ -738,13 +825,15 @@
     if (!S.initData) return fatal("Please open this game from Telegram.");
     try {
       S.cfg = await api("/api/config");
-      S.me = (await api("/api/me", { method: "POST" })).user;
+      const me = await api("/api/me", { method: "POST" });
+      S.me = me.user; S.isAdmin = !!me.is_admin;
     } catch (e) { return fatal(e.message || "Could not connect to the server"); }
 
     const sp = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || params.get("room") || params.get("startapp") || "";
-    if (/^[0-9a-fA-F]{8}$/.test(sp)) joinRoom(sp.toUpperCase()); else showHome();
+    if (/^[0-9a-fA-F]{8}$/.test(sp)) joinRoom(sp.toUpperCase());
+    else { showHome(); if (params.get("owner") && S.isAdmin) HUB.openOwner(); }
   }
-  Object.assign(window.HUB, { S, send, esc, sleep, sfx, haptic, avatarInner, handle, topbarHTML, diceHTML, toast, tumble, confetti, tone, noise });
+  Object.assign(window.HUB, { api, tg, refreshHome: () => renderHome(), S, send, esc, sleep, sfx, haptic, avatarInner, handle, topbarHTML, diceHTML, toast, tumble, confetti, tone, noise });
   window.HUB.UI.ludo = { build: buildLudo, apply: applyLudo };
   window.HUB.UI.tictactoe = { build: buildTTT, apply: applyTTT };
   boot();
