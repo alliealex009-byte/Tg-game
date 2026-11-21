@@ -198,10 +198,63 @@ class BotHandlerTests(unittest.TestCase):
         self.assertFalse(self.bot.send_message.called)
 
     def test_group_added_welcome(self):
-        ev = NS(chat=NS(id=-9, type=sys.modules["aiogram.enums"].ChatType.SUPERGROUP, title="Fun"), new_chat_member=NS(status="member"), from_user=NS(id=2, full_name="Bob", id_=2))
+        ev = NS(chat=NS(id=-9, type=sys.modules["aiogram.enums"].ChatType.SUPERGROUP, title="Fun"), new_chat_member=NS(status="member"), old_chat_member=NS(status="left"), from_user=NS(id=2, full_name="Bob", id_=2))
         self.run_(self.h["my_member"](ev))
         self.assertIn(-9, self.db.chat_ids())
         self.assertIn("Groupingabot", self.bot.send_photo.call_args.kwargs["caption"])
+
+    def _group_msg(self, uid=2):
+        return msg(uid, chat=sys.modules["aiogram.enums"].ChatType.SUPERGROUP, cid=-55)
+
+    def test_group_picker_and_room(self):
+        m = self._group_msg()
+        self.run_(self.h["play_picker"](m))
+        kb = m.answer.call_args.kwargs["reply_markup"].inline_keyboard
+        data = [b.callback_data for row in kb for b in row if getattr(b, "callback_data", None)]
+        self.assertIn("gp:ludo", data)
+        self.assertIn("gp:uno", data)
+        self.assertNotIn("gp:poker", data)                      # curated list only
+        c = cbq(2, "gp:ludo"); c.message = self._group_msg()
+        self.run_(self.h["cb_group_play"](c))
+        self.assertEqual(len(self.rooms.rooms), 1)
+        btn = c.message.answer.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+        self.assertIn("?start=join_", btn.url)                  # groups can't open web_app buttons
+        m2 = self._group_msg()
+        self.run_(self.h["rooms_cmd"](m2))
+        self.assertIn("Open rooms", m2.reply.call_args.args[0])
+
+    def test_group_start_and_addgroup(self):
+        m = self._group_msg()
+        self.run_(self.h["start"](m, NS(args="")))
+        self.assertTrue(m.answer.called)
+        m2 = msg(2)
+        self.run_(self.h["addgroup"](m2))
+        url = m2.reply.call_args.kwargs["reply_markup"].inline_keyboard[0][0].url
+        self.assertIn("startgroup=", url)
+        self.assertIn("admin=", url)
+
+    def test_join_buttons_follow_app_detection(self):
+        self.ctx["app_ok"], self.ctx["app_short"] = False, "play"
+        m = msg(2)
+        self.run_(self.h["create_cmd"](m, NS(args=None, command="playludo"))) if "create_cmd" in self.h else None
+        c = cbq(2, "m:play:ludo")
+        self.run_(self.h["cb_play"](c))
+        b = self.bot.send_message.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+        self.assertTrue(hasattr(b, "web_app") and b.web_app is not None)   # private chat: web_app button
+        self.ctx["app_ok"] = True
+        c = cbq(2, "m:play:ludo")
+        self.run_(self.h["cb_play"](c))
+        b = self.bot.send_message.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+        self.assertIn("t.me/TestBot/play?startapp=", b.url)
+
+    def test_bot_replaced_when_lobby_full(self):
+        r = self.rooms.create(1, "tictactoe", 0)
+        from app.rooms import Player
+        r.players = [Player(1, "a", "a", None, coins=1), Player(-1, "bot", "bot", None, coins=1, is_bot=True)]
+        class WS:
+            async def send_json(self, x): pass
+        self.run_(self.rooms.join(r, {"id": 2, "name": "B", "username": "b", "coins": 10}, WS()))
+        self.assertEqual(sorted(p.uid for p in r.players), [1, 2])
 
 
 if __name__ == "__main__":

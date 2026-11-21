@@ -513,8 +513,12 @@ class ScribbleTests(unittest.TestCase):
                     q.auto_play()
                 self.assertTrue(q.finished)
         b = ScribbleGame([1, -1, -2], rng=random.Random(4), clock=lambda: self.t[0])
-        d = b.bot_due()
-        if d is not None:
+        for _ in range(12):
+            d = b.bot_due()
+            if d is None or b.guessed:
+                break
             self.t[0] += d + 0.1
             b.bot_event()
-            self.assertTrue(b.guessed)
+        self.assertTrue(b.guessed)
+        self.assertTrue(any("text" in m for m in b.chat))   # wrong guesses show up too
+        self.assertTrue(all(b.drawer > 0 for _ in [0]))     # computer players never draw
