@@ -172,6 +172,11 @@ class RoomManager:
         uid = user["id"]
         room.touched = time.time()
         p = room.player(uid)
+        if p is None and room.status == "lobby" and len(room.players) >= room.max_players:
+            # a lobby padded with computer players must never lock a real friend out
+            bot_p = next((x for x in reversed(room.players) if x.is_bot), None)
+            if bot_p is not None:
+                room.players.remove(bot_p)
         if p is None and room.status == "lobby" and len(room.players) < room.max_players:
             if room.bet and user["coins"] < room.bet:
                 raise GameError(f"You need {room.bet} coins to join this room")
@@ -180,6 +185,7 @@ class RoomManager:
             p.name, p.photo, p.coins = user["name"], user.get("photo") or p.photo, user["coins"]
             room.watchers.pop(uid, None)
         else:  # game running or room full: watch instead of being turned away
+            log.info("room %s: %s joins as spectator (status=%s, %d/%d)", room.code, uid, room.status, len(room.players), room.max_players)
             room.watchers[uid] = user["name"]
         room.conns.setdefault(uid, set()).add(ws)
         await self.broadcast(room)

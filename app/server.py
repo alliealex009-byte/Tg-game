@@ -21,7 +21,7 @@ from .db import DB
 from . import broadcast as bcast
 from .arcade import Arcade
 from .idle import Idle
-from .games import GAME_INFO, GAMES
+from .games import GAME_INFO, GAMES, LISTED
 from .howto import ARCADE_TIPS, HOWTO
 from .games.base import GameError
 from .rooms import RoomManager
@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI):
             bot, dp, ctx = build(settings, db, rooms)
             await prepare(bot, settings, ctx)
             app.state.bot_username = ctx["username"]
+            app.state.ctx = ctx
             app.state.bot = bot
             tasks.append(
                 asyncio.create_task(
@@ -123,8 +124,8 @@ async def healthz():
 async def config():
     return {
         "bot": app.state.bot_username,
-        "app": settings.app_short_name,
-        "games": GAME_INFO,
+        "app": (getattr(app.state, "ctx", None) or {}).get("app_short", "") if (getattr(app.state, "ctx", None) or {}).get("app_ok") else "",
+        "games": {k: ({**v, "hidden": True} if k not in LISTED else v) for k, v in GAME_INFO.items()},
         "bets": BETS,
         "daily": settings.daily_bonus,
         "rake": settings.rake_percent,

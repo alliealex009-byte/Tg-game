@@ -26,7 +26,7 @@ from aiogram.types import (
 )
 
 from . import broadcast
-from .games import GAME_INFO
+from .games import GAME_INFO, LISTED
 from .games.base import GameError
 from .verify import Verifier
 
@@ -48,7 +48,7 @@ def players_txt(i) -> str:
 
 COMMANDS = (
     [BotCommand(command="start", description="Open the game hub"), BotCommand(command="games", description="List all games")]
-    + [BotCommand(command=i["cmd"], description=f"{i['emoji']} {i['title']} [bet]"[:100]) for i in GAME_INFO.values()]
+    + [BotCommand(command=i["cmd"], description=f"{i['emoji']} {i['title']} [bet]"[:100]) for i in LISTED.values()]
     + [
         BotCommand(command="profile", description="Your stats"),
         BotCommand(command="balance", description="Your coin balance"),
@@ -62,12 +62,28 @@ COMMANDS = (
 )[:100]
 
 
+GROUP_COMMANDS = [
+    BotCommand(command="play", description="🎮 Pick a game to play in this group"),
+    BotCommand(command="games", description="List all games"),
+    BotCommand(command="rooms", description="Open game rooms in this group"),
+    BotCommand(command="top", description="Leaderboard"),
+    BotCommand(command="daily", description="Claim your daily bonus"),
+    BotCommand(command="profile", description="Your stats"),
+    BotCommand(command="addgroup", description="Add me to another group"),
+    BotCommand(command="help", description="How to play"),
+] + [BotCommand(command=GAME_INFO[k]["cmd"], description=f"{GAME_INFO[k]['emoji']} {GAME_INFO[k]['title']} [bet]"[:100])
+     for k in ("ludo", "uno", "carrom", "chess", "snakes", "tictactoe", "connect4", "teenpatti") if k in GAME_INFO]
+ADMIN_GROUP_COMMANDS = [BotCommand(command="verify", description="Join-request verification on/off (admins)")]
+
+ADD_RIGHTS = "delete_messages+invite_users+pin_messages+restrict_members"
+
+
 def games_list(cat: str | None = None) -> str:
     out = []
     for c in CATS:
         if cat and c != cat:
             continue
-        items = [i for i in GAME_INFO.values() if cat_of(i) == c]
+        items = [i for i in LISTED.values() if cat_of(i) == c]
         if not items:
             continue
         out.append(f"{CAT_EMOJI[c]} <b>{c}</b>")
@@ -106,8 +122,9 @@ def build(settings, db, rooms):
     dp = Dispatcher()
     r = Router()
     dp.include_router(r)
-    ctx = {"username": "", "banner_id": None}
+    ctx = {"username": "", "banner_id": None, "app_ok": False, "app_short": ""}
     verifier = Verifier()
+    chat_rooms: dict = {}   # chat id -> recent room codes (for /rooms)
     pending_bc: dict = {}   # admin id -> {"target": str, "src": (chat_id, msg_id) | None}
     owner_tag = f"@{settings.owner_username}"
     sister_tag = f"@{settings.sister_bot}"
@@ -125,8 +142,8 @@ def build(settings, db, rooms):
         return uid in settings.admin_ids
 
     def app_link(code=None):
-        if settings.app_short_name and ctx["username"]:
-            base = f"https://t.me/{ctx['username']}/{settings.app_short_name}"
+        if ctx["app_ok"] and ctx["app_short"] and ctx["username"]:
+            base = f"https://t.me/{ctx['username']}/{ctx['app_short']}"
             return f"{base}?startapp={code}" if code else base
         return None
 
@@ -142,6 +159,12 @@ def build(settings, db, rooms):
         link = app_link()
         return Btn(text=label, url=link) if link else Btn(text=label, web_app=WebAppInfo(url=settings.webapp_url))
 
+    def addgroup_url() -> str:
+        return f"https://t.me/{ctx['username']}?startgroup=start&admin={ADD_RIGHTS}"
+
+    def addgroup_btn(label="➕ Add me to a Group"):
+        return Btn(text=label, url=addgroup_url())
+
     def credit_line() -> str:
         return f"👑 Owner: <b>{esc(settings.owner_name)}</b> ({owner_tag})"
 
@@ -155,6 +178,7 @@ def build(settings, db, rooms):
             [Btn(text="🕹 All Games", callback_data="m:games"), Btn(text="👤 Profile", callback_data="m:profile")],
             [Btn(text="🏆 Leaderboard", callback_data="m:top"), Btn(text="🎁 Daily Bonus", callback_data="m:daily")],
             [Btn(text="👥 Invite & Earn", callback_data="m:invite"), Btn(text="❓ How to play", callback_data="m:help")],
+            [addgroup_btn()],
             [Btn(text=f"🤖 {settings.sister_bot}", url=f"https://t.me/{settings.sister_bot}"),
              Btn(text=f"👑 {settings.owner_name}", url=f"https://t.me/{settings.owner_username}")],
         ])
@@ -165,7 +189,7 @@ def build(settings, db, rooms):
     def welcome_text(u) -> str:
         return (
             f"✨ <b>Welcome, {esc(u['name'])}!</b> ✨\n\n"
-            f"🎮 <b>{len(GAME_INFO)} multiplayer games</b> — Ludo, Chess, UNO, Teen Patti, Mafia, Carrom and more, "
+            f"🎮 <b>{len(LISTED)} multiplayer games</b> — Ludo, Chess, UNO, Teen Patti, Mafia, Carrom and more, "
             "played live with friends right inside Telegram.\n\n"
             f"💰 Balance: <b>{u['coins']}</b> coins   🏆 Wins: <b>{u['wins']}</b>\n\n"
             "👇 Tap <b>PLAY NOW</b>, or add me to a group and send /games\n\n"
@@ -221,7 +245,7 @@ def build(settings, db, rooms):
                 except Exception:
                     pass
         if m.chat.type != ChatType.PRIVATE:
-            return await m.answer(f"👋 Hi! Send /games to see every game, or tap below.", reply_markup=Kb(inline_keyboard=[[hub_btn()]]))
+            return await group_picker(m)
         await send_banner(m.chat.id, welcome_text(u), main_menu(m.from_user.id))
 
     @r.callback_query(F.data == "m:home")
@@ -232,18 +256,18 @@ def build(settings, db, rooms):
     async def cb_games(cb: CallbackQuery):
         rows, row = [], []
         for c in CATS:
-            if any(cat_of(i) == c for i in GAME_INFO.values()):
+            if any(cat_of(i) == c for i in LISTED.values()):
                 row.append(Btn(text=f"{CAT_EMOJI[c]} {c}", callback_data=f"m:cat:{c}"))
                 if len(row) == 2:
                     rows.append(row); row = []
         if row:
             rows.append(row)
-        await show(cb, f"🕹 <b>{len(GAME_INFO)} games</b>\nPick a category:", back_menu(*rows))
+        await show(cb, f"🕹 <b>{len(LISTED)} games</b>\nPick a category:", back_menu(*rows))
 
     @r.callback_query(F.data.startswith("m:cat:"))
     async def cb_cat(cb: CallbackQuery):
         c = cb.data[6:]
-        items = [(k, i) for k, i in GAME_INFO.items() if cat_of(i) == c]
+        items = [(k, i) for k, i in LISTED.items() if cat_of(i) == c]
         rows = []
         for k, i in items:
             rows.append([Btn(text=f"{i['emoji']} {i['title']} ({players_txt(i)}p)", callback_data=f"m:play:{k}")])
@@ -265,8 +289,9 @@ def build(settings, db, rooms):
             cb.message.chat.id,
             f"{i['emoji']} <b>{i['title']}</b> — room <code>{room.code}</code>\n"
             f"Players: {players_txt(i)} · Free game\n\nTap <b>Join</b> to open it. Share the room code with friends, or add computer players inside.",
-            reply_markup=Kb(inline_keyboard=[[join_btn(room.code, True, f"🎮 Join {i['title']}")]]),
+            reply_markup=Kb(inline_keyboard=[[join_btn(room.code, cb.message.chat.type == ChatType.PRIVATE, f"🎮 Join {i['title']}")]]),
         )
+        note_room(cb.message.chat.id, room.code)
 
     def profile_text(uid: int) -> str:
         u = db.get_user(uid)
@@ -360,7 +385,7 @@ def build(settings, db, rooms):
     @r.message(Command("games"))
     async def games(m: Message):
         await m.reply(
-            f"🎮 <b>{len(GAME_INFO)} games</b>\n\n" + games_list() + "\n\nAdd a number for a coin bet, e.g. <code>/playludo 100</code>"
+            f"🎮 <b>{len(LISTED)} games</b>\n\n" + games_list() + "\n\nAdd a number for a coin bet, e.g. <code>/playludo 100</code>"
         )
 
     # ------------------------------------------------------------------ creating rooms from chat commands
@@ -387,6 +412,73 @@ def build(settings, db, rooms):
             "Tap the button below to join!"
         )
         await m.reply(text, reply_markup=Kb(inline_keyboard=[[join_btn(room.code, private, f"🎮 Join {info['title']}")]]))
+        note_room(m.chat.id, room.code)
+
+    def note_room(chat_id: int, code: str):
+        lst = chat_rooms.setdefault(chat_id, [])
+        lst.append(code)
+        del lst[:-8]
+
+    async def group_picker(m: Message):
+        rows, row = [], []
+        for k, i in LISTED.items():
+            row.append(Btn(text=f"{i['emoji']} {i['title']}", callback_data=f"gp:{k}"))
+            if len(row) == 2:
+                rows.append(row); row = []
+        if row:
+            rows.append(row)
+        rows.append([Btn(text="➕ Add me to another group", url=addgroup_url())])
+        await m.answer(
+            "🎮 <b>Pick a game for this group</b>\nTap one and I will open a lobby everybody can join.\n"
+            "<i>Tip: make me an admin so I can keep the chat tidy.</i>",
+            reply_markup=Kb(inline_keyboard=rows),
+        )
+
+    @r.message(Command("play"))
+    async def play_picker(m: Message):
+        await group_picker(m)
+
+    @r.callback_query(F.data.startswith("gp:"))
+    async def cb_group_play(cb: CallbackQuery):
+        key = cb.data[3:]
+        if key not in GAME_INFO or cb.message is None:
+            return await cb.answer()
+        u = ensure_user(cb.from_user)
+        try:
+            room = rooms.create(u["id"], key, 0)
+        except GameError as e:
+            return await cb.answer(str(e), show_alert=True)
+        i = GAME_INFO[key]
+        await cb.answer(f"{i['title']} lobby opened!")
+        private = cb.message.chat.type == ChatType.PRIVATE
+        await cb.message.answer(
+            f"{i['emoji']} <b>{i['title']} - New Game</b>\n\n🔗 Room : <code>{room.code}</code>\n👤 Host : {esc(u['name'])}\n"
+            f"👥 Players : {players_txt(i)}\n\nTap the button below to join!",
+            reply_markup=Kb(inline_keyboard=[[join_btn(room.code, private, f"🎮 Join {i['title']}")]]),
+        )
+        note_room(cb.message.chat.id, room.code)
+
+    @r.message(Command("rooms"))
+    async def rooms_cmd(m: Message):
+        private = m.chat.type == ChatType.PRIVATE
+        live = [(c, rooms.get(c)) for c in chat_rooms.get(m.chat.id, [])]
+        live = [(c, rm) for c, rm in live if rm is not None]
+        if not live:
+            return await m.reply("No open rooms here. Start one with /play")
+        rows = []
+        for c, rm in live[-6:]:
+            i = GAME_INFO[rm.game_type]
+            rows.append([join_btn(c, private, f"{i['emoji']} {i['title']} · {c}")])
+        await m.reply("🎮 <b>Open rooms</b>", reply_markup=Kb(inline_keyboard=rows))
+
+    @r.message(Command("addgroup"))
+    async def addgroup(m: Message):
+        await m.reply(
+            "➕ <b>Add me to your group</b>\nTap the button, choose a group, and accept the admin rights. "
+            "Then send <code>/play</code> in the group.\n\n"
+            "If Telegram says it cannot add me, the owner must enable <i>Allow Groups</i> in BotFather (/setjoingroups).",
+            reply_markup=Kb(inline_keyboard=[[addgroup_btn()]]),
+        )
 
     @r.message(Command(*PLAY_CMDS))
     async def play(m: Message, command: CommandObject):
@@ -401,16 +493,16 @@ def build(settings, db, rooms):
             return
         if st in ("member", "administrator"):
             db.upsert_chat(chat.id, chat.title or "", chat.type.value)
-            if chat.type == ChatType.CHANNEL:
-                return
+            if chat.type == ChatType.CHANNEL or ev.old_chat_member.status in ("member", "administrator"):
+                return  # promotion / demotion, not a fresh add
             who = esc(ev.from_user.full_name) if ev.from_user else "everyone"
             try:
                 await bot.send_photo(
                     chat.id, ctx["banner_id"] or FSInputFile(BANNER),
                     caption=(
                         f"🎉 <b>Thanks for adding me, {who}!</b>\n\n"
-                        f"🎮 I bring <b>{len(GAME_INFO)} multiplayer games</b> to this group — Ludo, Chess, UNO, Teen Patti, Mafia, Carrom &amp; more.\n\n"
-                        "▶️ Try <code>/playludo</code> · <code>/playuno</code> · <code>/playchess</code>\n"
+                        f"🎮 I bring <b>{len(LISTED)} multiplayer games</b> to this group — Ludo, Chess, UNO, Teen Patti, Mafia, Carrom &amp; more.\n\n"
+                        "▶️ Send <code>/play</code> to pick a game, or <code>/playludo</code> · <code>/playuno</code> · <code>/playchess</code>\n"
                         "📋 /games shows everything\n\n"
                         "🛡 Make me an admin with <i>Invite users</i> and I will verify every join request automatically (/verify on|off).\n\n"
                         f"{sister_line()}\n{credit_line()}"
@@ -710,16 +802,61 @@ def build(settings, db, rooms):
     return bot, dp, ctx
 
 
+async def _og(session, url):
+    import re as _re
+    async with session.get(url, timeout=8) as resp:
+        t = await resp.text()
+    pick = lambda k: (_re.search(r'property="og:%s" content="([^"]*)"' % k, t) or [None, ""])[1]
+    return pick("title"), pick("description"), pick("image")
+
+
+async def detect_app(settings, ctx):
+    """Does t.me/<bot>/<short> open a real Mini App? If BotFather has no such app, Telegram just shows the
+    bot's own page, and every startapp link silently fails. Fall back to buttons that always work."""
+    mode = settings.app_links
+    short = settings.app_short_name or "play"
+    ctx["app_short"], ctx["app_ok"] = short, False
+    if mode == "off":
+        return
+    if mode == "on":
+        ctx["app_ok"] = True
+        return
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as ses:
+            a = await _og(ses, f"https://t.me/{ctx['username']}/{short}")
+            b = await _og(ses, f"https://t.me/{ctx['username']}")
+        ctx["app_ok"] = a != b and bool(a[0])
+    except Exception:
+        log.info("could not probe the Mini App link; using safe web_app buttons")
+    if ctx["app_ok"]:
+        log.info("Mini App link OK: https://t.me/%s/%s", ctx["username"], short)
+    else:
+        log.warning(
+            "No BotFather Mini App named '%s' found for @%s, so share links use the in-bot join button instead. "
+            "To get t.me/%s/%s?startapp=CODE links: BotFather > /newapp > pick the bot > Web App URL %s > short name '%s'; "
+            "then restart (or set APP_LINKS=on).", short, ctx["username"], ctx["username"], short, settings.webapp_url, short)
+
+
+async def set_commands(bot):
+    from aiogram.types import BotCommandScopeAllChatAdministrators, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
+    await bot.set_my_commands(COMMANDS, scope=BotCommandScopeAllPrivateChats())
+    await bot.set_my_commands(COMMANDS)
+    await bot.set_my_commands(GROUP_COMMANDS, scope=BotCommandScopeAllGroupChats())
+    await bot.set_my_commands(GROUP_COMMANDS + ADMIN_GROUP_COMMANDS, scope=BotCommandScopeAllChatAdministrators())
+
+
 async def prepare(bot: Bot, settings, ctx):
     """Fetch the bot username, register commands, descriptions and the menu button."""
     me = await bot.get_me()
     ctx["username"] = me.username
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_my_commands(COMMANDS)
+    await set_commands(bot)
+    await detect_app(settings, ctx)
     try:
-        await bot.set_my_short_description(f"{len(GAME_INFO)}+ multiplayer games: Ludo, Chess, UNO, Teen Patti, Mafia. Owner: @{settings.owner_username}")
+        await bot.set_my_short_description(f"{len(LISTED)}+ multiplayer games: Ludo, Chess, UNO, Teen Patti, Mafia. Owner: @{settings.owner_username}")
         await bot.set_my_description(
-            f"🎮 {len(GAME_INFO)} multiplayer games right inside Telegram — Ludo, Chess, UNO, Teen Patti, Mafia, Carrom and more.\n"
+            f"🎮 {len(LISTED)} multiplayer games right inside Telegram — Ludo, Chess, UNO, Teen Patti, Mafia, Carrom and more.\n"
             f"Owner: {settings.owner_name} (@{settings.owner_username}) · Sister bot: @{settings.sister_bot}"
         )
     except Exception:

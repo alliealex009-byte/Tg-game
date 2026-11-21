@@ -21,6 +21,7 @@ def _bool(value: str) -> bool:
 class Settings:
     bot_token: str = ""
     webapp_url: str = ""          # public https URL of this server, no trailing slash
+    app_links: str = "auto"       # auto | on | off  - use t.me/bot/app?startapp= links (needs a BotFather /newapp app)
     app_short_name: str = ""      # BotFather /newapp short name (enables t.me/bot/app?startapp=CODE links)
     admin_ids: tuple = ()
     db_path: str = "data/ludo.db"
@@ -43,6 +44,7 @@ def load_settings() -> Settings:
     return Settings(
         bot_token=e("BOT_TOKEN", "").strip(),
         webapp_url=e("WEBAPP_URL", "").strip().rstrip("/"),
+        app_links=e("APP_LINKS", "auto").strip().lower(),
         app_short_name=e("APP_SHORT_NAME", "").strip(),
         admin_ids=_ints(e("ADMIN_IDS", "")),
         db_path=e("DB_PATH", "data/ludo.db"),
