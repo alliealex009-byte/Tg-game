@@ -53,3 +53,15 @@ for _grp in ("boards", "cards", "dice", "party", "action", "arena", "arena2"):
 # categories for the home screen / bot menu: Board, Cards, Party, Casino, Brain, Classic
 for _k in ("ludo", "snakes", "carrom", "connect4", "tictactoe", "rps", "memory"):
     GAME_INFO[_k].setdefault("cat", "Classic")
+
+# Curated lineup: the classics people actually play. Everything else keeps working (engines, /play commands,
+# tests) but is hidden from menus unless SHOW_ALL_GAMES=1.
+FEATURED = [
+    "ludo", "uno", "carrom", "chess", "snakes", "checkers", "connect4", "tictactoe", "dominoes", "battleship",
+    "dots", "hangman", "bingo", "teenpatti", "mafia", "scribble", "trivia", "tank", "race", "memory", "crazy8",
+]
+LISTED = (
+    dict(GAME_INFO)
+    if os.environ.get("SHOW_ALL_GAMES", "").strip().lower() in ("1", "true", "yes")
+    else {k: GAME_INFO[k] for k in FEATURED if k in GAME_INFO}
+)

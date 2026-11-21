@@ -36,7 +36,9 @@ class ScribbleGame(BaseGame):
         self.clock = clock
         self.players = list(players)
         self.score = {u: 0 for u in self.players}
-        self.order = self.players * (2 if len(self.players) <= 4 else 1)
+        humans = [u for u in self.players if u > 0]
+        artists = humans if humans else list(self.players)   # computer players guess, they don't draw
+        self.order = artists * (2 if len(self.players) <= 4 else 1)
         self.turn_no = 0
         self.phase_id = 0
         self.seq = 0
@@ -68,7 +70,14 @@ class ScribbleGame(BaseGame):
         self.chat = []
         self.t0 = self.clock()
         self.phase_id += 1
-        self.bot_at = {u: self.t0 + self.rng.uniform(14, 55) for u in self.players if u < 0 and u != self.drawer and self.rng.random() < 0.6}
+        self.bot_at = {u: self.t0 + self.rng.uniform(12, 50) for u in self.players if u < 0 and u != self.drawer and self.rng.random() < 0.85}
+        # computer players also throw in a couple of wrong guesses first, so the chat feels alive
+        decoys = [w for w in sorted(set(WORDS)) if w != self.word]
+        self.bot_wrong = []
+        for u, t_ok in self.bot_at.items():
+            for _ in range(self.rng.choice((1, 2, 2, 3))):
+                self.bot_wrong.append((self.t0 + self.rng.uniform(4, max(5, t_ok - self.t0 - 1)), u, self.rng.choice(decoys)))
+        self.bot_wrong.sort()
 
     def _end_turn(self, why):
         self.seq += 1
@@ -169,15 +178,22 @@ class ScribbleGame(BaseGame):
 
     # ---- timers / bots
     def bot_due(self):
-        c = [t for u, t in self.bot_at.items() if u not in self.guessed]
+        c = [t for u, t in self.bot_at.items() if u not in self.guessed] + [t for t, u, _ in self.bot_wrong if u not in self.guessed]
         return None if self.finished or not c else max(0.0, min(c) - self.clock())
 
     def bot_event(self):
         now = self.clock()
+        while self.bot_wrong and self.bot_wrong[0][0] <= now:
+            _, u, w = self.bot_wrong.pop(0)
+            if u in self.players and u not in self.guessed:
+                self.chat.append({"uid": u, "text": w})
+                self.chat = self.chat[-14:]
+                self.seq += 1
+                return
         for u, t in sorted(self.bot_at.items(), key=lambda kv: kv[1]):
             if t <= now and u not in self.guessed and u in self.players:
-                self._award(u)
-                self.chat.append({"uid": u, "ok": True, "pts": 0})
+                pts = self._award(u)
+                self.chat.append({"uid": u, "ok": True, "pts": pts})
                 self.seq += 1
                 if len(self.guessed) >= len(self._guessers()):
                     self._end_turn("all guessed")
