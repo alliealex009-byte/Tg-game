@@ -12,10 +12,18 @@
   const RORD = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"];
 
   /* ---------- card faces (pure CSS) ---------- */
+  const U_SKIP = '<svg viewBox="0 0 24 24" class="usv"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="3.4"/><path d="M6 18L18 6" stroke="currentColor" stroke-width="3.4" stroke-linecap="round"/></svg>';
+  const U_REV = '<svg viewBox="0 0 24 24" class="usv"><path d="M4 9h13l-3.5-3.5M20 15H7l3.5 3.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function unoVal(c) {
+    if (c[0] === "W") return c === "W4" ? "+4" : "";
+    const k = c.slice(1);
+    return k === "S" ? U_SKIP : k === "R" ? U_REV : k === "D" ? "+2" : k;
+  }
   function unoFace(c) {
     const col = c[0] === "W" ? "wild" : UCOL[c[0]];
-    const v = c[0] === "W" ? (c === "W4" ? "+4" : "★") : ({ S: "⊘", R: "⇄", D: "+2" }[c.slice(1)] || c.slice(1));
-    return `<div class="gc-card uno ${col}" data-c="${c}"><i class="tl">${v}</i><b>${v}</b><i class="br">${v}</i></div>`;
+    const v = unoVal(c), small = c[0] === "W" ? (c === "W4" ? "+4" : "★") : (c.slice(1) === "S" ? "⊘" : c.slice(1) === "R" ? "⇄" : v);
+    const mid = c === "W" ? '<span class="wq"><u></u><u></u><u></u><u></u></span>' : `<b>${v}</b>`;
+    return `<div class="gc-card uno ${col} ${c.length > 1 && /[SRD]/.test(c.slice(1)) || c === "W4" ? "sp" : ""}" data-c="${c}"><i class="tl">${small}</i><div class="oval">${mid}</div><i class="br">${small}</i></div>`;
   }
   function stdFace(c) {
     const r = c.slice(0, -1), s = c.slice(-1), red = s === "H" || s === "D";
@@ -46,7 +54,7 @@
     el.remove();
     from.style.visibility = "";
   }
-  const chipEl = (uid) => document.querySelector(`#screen-game .pchip[data-uid="${uid}"]`);
+  const chipEl = (uid) => document.querySelector(`#screen-game .gc-opp[data-uid="${uid}"]`) || document.querySelector(`#screen-game .pchip[data-uid="${uid}"]`);
 
   /* ---------- shared scaffolding ---------- */
   function buildCommon(type, s, extraBody) {
@@ -71,11 +79,15 @@
     if (ui.handKey === key) return;
     ui.handKey = key;
     if (!K().iAmPlaying(s)) { box.innerHTML = '<div class="gc-spec">👁 Watching</div>'; return; }
-    const sorted = kind === "gofish" ? hand.slice().sort((a, b) => RORD.indexOf(a.slice(0, -1)) - RORD.indexOf(b.slice(0, -1))) : hand;
-    const n = sorted.length, step = n > 1 ? Math.min(62, (Math.min(window.innerWidth, 440) - 90) / (n - 1)) : 0;
-    box.innerHTML = `<div class="gc-fan" style="--ov:${(step - 56).toFixed(1)}px">` + sorted.map((c) => {
-      const ok = !opts || !opts.playable || play.has(c);
-      return `<div class="gc-slot ${mine && ok ? "can" : mine ? "no" : ""}">${face(kind === "uno" ? "uno" : "std", c)}</div>`;
+    const UO = { R: 0, Y: 1, G: 2, B: 3, W: 4 };
+    const unoKey = (c) => UO[c[0]] * 100 + (/\d/.test(c[1] || "") ? +c.slice(1) : 20 + c.charCodeAt(1) % 10);
+    const sorted = kind === "gofish" ? hand.slice().sort((a, b) => RORD.indexOf(a.slice(0, -1)) - RORD.indexOf(b.slice(0, -1)))
+      : kind === "uno" ? hand.slice().sort((a, b) => unoKey(a) - unoKey(b)) : hand;
+    const cw = kind === "uno" ? 64 : 56;
+    const n = sorted.length, step = n > 1 ? Math.min(cw + 6, (Math.min(window.innerWidth, 440) - 70 - cw) / (n - 1)) : 0;
+    box.innerHTML = `<div class="gc-fan ${kind}" style="--ov:${(step - cw).toFixed(1)}px">` + sorted.map((c, i) => {
+      const ok = !opts || !opts.playable || play.has(c), mid = (n - 1) / 2, d = i - mid;
+      return `<div class="gc-slot ${mine && ok ? "can" : mine ? "no" : ""}" style="--rot:${(d * Math.min(4, 22 / Math.max(1, n))).toFixed(1)}deg;--dy:${(d * d * 0.5).toFixed(1)}px;z-index:${i}">${face(kind === "uno" ? "uno" : "std", c)}</div>`;
     }).join("") + "</div>";
   }
 
@@ -162,11 +174,19 @@
     return UCN[c[0]] + " " + ({ S: "Skip", R: "Reverse", D: "+2" }[c.slice(1)] || c.slice(1));
   }
   function renderPileTable(ui, s, g, kind) {
-    const cur = kind === "uno" ? g.cur : g.cur;
-    const ind = kind === "uno" ? `<div class="gc-col ${UCOL[cur] || ""}" title="${UCN[cur] || ""}"></div><div class="gc-dir">${g.dir === 1 ? "↻" : "↺"}</div>`
+    const cur = g.cur;
+    const hist = ui.pileHist = ui.pileHist || [];
+    if (hist[hist.length - 1] !== g.top) { hist.push(g.top); if (hist.length > 4) hist.shift(); }
+    const rot = (c, i) => (((c.charCodeAt(0) * 7 + (c.charCodeAt(1) || 3) * 13 + i * 29) % 36) - 18);
+    const stack = hist.map((c, i) => `<div class="gc-pcard" style="transform:rotate(${i === hist.length - 1 ? 0 : rot(c, i)}deg)">${face(kind, c)}</div>`).join("");
+    const ind = kind === "uno" ? `<div class="gc-col ${UCOL[cur] || ""}" title="${UCN[cur] || ""}">${UCN[cur] || ""}</div><div class="gc-dir ${g.dir === 1 ? "" : "rev"}">↻</div>`
       : `<div class="gc-suit ${cur === "H" || cur === "D" ? "red" : ""}">${SYM[cur] || ""}</div>`;
-    $("#gct").innerHTML = `<div class="gc-center"><div class="gc-deck" id="gc-draw">${back()}<span>${g.draw_count}</span></div>
-      <div class="gc-pile" id="gc-pile">${face(kind, g.top)}</div><div class="gc-ind">${ind}</div></div>`;
+    const opp = (g.players || []).filter((p) => p.uid !== s.you).map((p) => {
+      const n = Math.min(p.n, 8), cls = p.uid === g.turn ? "act" : "";
+      return `<div class="gc-opp ${cls}" data-uid="${p.uid}"><div class="gc-ofan">${Array.from({ length: n }, (_, i) => `<i style="--i:${i};--n:${n}"></i>`).join("")}</div><div class="gc-on">${esc(K().nameOf(s, p.uid)).slice(0, 9)} · <b>${p.n}</b>${p.n === 1 ? " 🔥" : ""}</div></div>`;
+    }).join("");
+    $("#gct").innerHTML = `<div class="gc-opps">${opp}</div><div class="gc-center"><div class="gc-deck" id="gc-draw">${back()}<span>${g.draw_count}</span></div>
+      <div class="gc-pile glow-${UCOL[cur] || ""}" id="gc-pile">${stack}</div><div class="gc-ind">${ind}</div></div>`;
   }
 
   /* =====================================================================

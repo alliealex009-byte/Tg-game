@@ -60,3 +60,12 @@
 .gb-wc.miss{background:#ffffff33;font-size:min(6vw,3vh)}
 .gb-wc.hit{background:#c0392b}
 .gb-wc.sunk{background:#4a1410;box-shadow:inset 0 0 0 1px #000}
+
+/* chess animation helpers */
+.gb-chess .gb-sq.sel .gb-pc{transform:translateY(-4px) scale(1.14);filter:drop-shadow(0 6px 4px #0008)}
+.gb-chess .gb-sq.tgt::after{animation:gbpop .25s ease-out,gbpulse 1s ease-in-out .25s infinite}
+@keyframes gbpop{from{transform:scale(0)}}
+.gb-ghost{position:absolute;display:block;line-height:1;font-size:min(9.6vw,6.2vh);pointer-events:none;z-index:7;text-shadow:0 2px 3px #0008}
+.gb-ghost.w{color:#fff;-webkit-text-stroke:1.2px #222}.gb-ghost.b{color:#1d1d22;-webkit-text-stroke:1px #000}
+.gb-spark{position:absolute;left:50%;top:50%;width:7px;height:7px;border-radius:50%;background:#ffd24a;box-shadow:0 0 8px #ff9d2e;pointer-events:none;z-index:8}
+.gb-sq.chkflash{animation:gbchk .45s 2}@keyframes gbchk{50%{filter:brightness(1.8)}}

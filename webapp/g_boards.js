@@ -25,6 +25,39 @@
     pc.animate([{ transform: `translate(${ra.left - rb.left}px,${ra.top - rb.top}px)` }, { transform: "none" }],
       { duration: ms || 230, easing: "cubic-bezier(.2,.8,.3,1)" }).onfinish = () => { pc.style.zIndex = ""; };
   }
+  /* chess: arc-lift slide, captured piece bursts away, castling rook, check shake, promotion sparkle */
+  function chessSlide(ui, from, to, ms, big) {
+    const a = ui.cells[from], b = ui.cells[to];
+    const pc = b && b.querySelector(".gb-pc");
+    if (!a || !pc || !pc.animate) return;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const dx = ra.left - rb.left, dy = ra.top - rb.top, dist = Math.hypot(dx, dy) / rb.width;
+    pc.style.zIndex = 6;
+    const lift = big ? 1.28 : 1.18;
+    pc.animate([
+      { transform: `translate(${dx}px,${dy}px) scale(1)`, filter: "drop-shadow(0 0 0 #0000)" },
+      { transform: `translate(${dx * 0.5}px,${dy * 0.5}px) scale(${lift})`, filter: "drop-shadow(0 8px 6px #0007)", offset: 0.55 },
+      { transform: "translate(0,0) scale(1.06)", offset: 0.88 },
+      { transform: "none", filter: "drop-shadow(0 0 0 #0000)" },
+    ], { duration: ms || Math.min(520, 220 + dist * 55), easing: "cubic-bezier(.3,.7,.25,1)" }).onfinish = () => { pc.style.zIndex = ""; };
+  }
+  function burst(cell, glyph, white) {
+    if (!cell || !cell.animate) return;
+    const g = document.createElement("span");
+    g.className = "gb-ghost " + (white ? "w" : "b"); g.textContent = glyph || "";
+    cell.appendChild(g);
+    g.animate([{ transform: "scale(1) rotate(0)", opacity: 1 }, { transform: "scale(1.5) rotate(25deg)", opacity: 0.8, offset: 0.35 }, { transform: "scale(.2) rotate(80deg)", opacity: 0 }],
+      { duration: 480, easing: "ease-out" }).onfinish = () => g.remove();
+    for (let i = 0; i < 9; i++) {
+      const d = document.createElement("i"), ang = (i / 9) * Math.PI * 2 + Math.random(), r = 26 + Math.random() * 22;
+      d.className = "gb-spark"; cell.appendChild(d);
+      d.animate([{ transform: "translate(-50%,-50%) scale(1)", opacity: 1 }, { transform: `translate(calc(-50% + ${Math.cos(ang) * r}px),calc(-50% + ${Math.sin(ang) * r}px)) scale(.1)`, opacity: 0 }],
+        { duration: 420 + Math.random() * 200, easing: "ease-out" }).onfinish = () => d.remove();
+    }
+  }
+  function shake(el) {
+    if (el && el.animate) el.animate([{ transform: "translateX(0)" }, { transform: "translateX(-4px)" }, { transform: "translateX(4px)" }, { transform: "translateX(-3px)" }, { transform: "translateX(2px)" }, { transform: "none" }], { duration: 420 });
+  }
   function pop(el) {
     if (el && el.animate) el.animate([{ transform: "scale(.2)", opacity: 0 }, { transform: "scale(1.15)", opacity: 1 }, { transform: "none" }], { duration: 260, easing: "ease-out" });
   }
@@ -119,11 +152,28 @@
     paintChess(s, ui);
     const lm = g.last_move;
     if (isNew && lm) {
-      slide(ui, lm.from, lm.to);
-      if (lm.capture) { HUB.sfx.capture(); HUB.haptic("heavy"); } else HUB.sfx.place();
+      chessSlide(ui, lm.from, lm.to, 0, lm.capture);
+      if (lm.castle) {                                   // the rook hops over the king
+        const row = Math.floor(lm.to / 8), short = lm.to % 8 === 6;
+        chessSlide(ui, row * 8 + (short ? 7 : 0), row * 8 + (short ? 5 : 3), 360);
+      }
+      if (lm.capture) {
+        const cap = typeof lm.capture === "string" && lm.capture !== "." ? lm.capture : (lm.piece ? (lm.piece === lm.piece.toUpperCase() ? "p" : "P") : "P");
+        const victimSq = lm.ep ? Math.floor(lm.from / 8) * 8 + lm.to % 8 : lm.to;
+        setTimeout(() => burst(ui.cells[victimSq], GL[cap], cap === cap.toUpperCase()), 170);
+        HUB.sfx.capture(); HUB.haptic("heavy");
+      } else HUB.sfx.place();
       if (lm.castle) setTimeout(() => HUB.sfx.place(), 130);
-      if (lm.promo) setTimeout(() => HUB.sfx.good(), 150);
-      if (lm.check) setTimeout(() => { HUB.tone(880, 0.12, "square", 0.18); HUB.tone(660, 0.18, "square", 0.18, 0.12); }, 120);
+      if (lm.promo) { setTimeout(() => { HUB.sfx.good(); pop(ui.cells[lm.to] && ui.cells[lm.to].querySelector(".gb-pc")); burst(ui.cells[lm.to], "✦", true); }, 260); }
+      if (lm.check && !s.game.winner) setTimeout(() => {
+        HUB.tone(880, 0.12, "square", 0.18); HUB.tone(660, 0.18, "square", 0.18, 0.12);
+        const k = ui.cells[g.in_check]; if (k) { shake(k); k.classList.add("chkflash"); setTimeout(() => k.classList.remove("chkflash"), 900); }
+      }, 260);
+      if (g.reason === "checkmate" || (s.status === "finished" && lm.check)) setTimeout(() => {
+        const k = ui.cells[g.in_check]; const pc = k && k.querySelector(".gb-pc");
+        if (pc && pc.animate) pc.animate([{ transform: "none" }, { transform: "rotate(90deg) translateY(6px)" }], { duration: 600, fill: "forwards", easing: "ease-in" });
+        HUB.sfx.bad && HUB.sfx.bad();
+      }, 500);
     }
     const col = (uid) => (g.players.find((p) => p.uid === uid) || {}).color;
     K().updateBar(ui, s, (uid) => ({ score: chessCaps(g, col(uid)), sub: col(uid) === "w" ? "⚪ White" : "⚫ Black" }));

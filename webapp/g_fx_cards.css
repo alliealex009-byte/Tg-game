@@ -1,0 +1,11 @@
+/* Extra motion for Teen Patti + Crazy Eights (wraps renderers; see g_fx_cards.js) */
+.fx-chip{position:fixed;z-index:60;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;pointer-events:none;
+  background:radial-gradient(circle at 35% 30%,#fff3b0,#ffd24a 45%,#c98a00);border:2px dashed rgba(120,70,0,.75);box-shadow:0 2px 4px rgba(0,0,0,.45)}
+.fx-banner{position:fixed;left:50%;top:38%;z-index:70;pointer-events:none;padding:10px 22px;border-radius:30px;font:800 22px system-ui,sans-serif;
+  color:#fff;background:rgba(20,20,30,.82);border:2px solid #ffd24a;box-shadow:0 6px 24px rgba(0,0,0,.5);transform:translate(-50%,-50%);white-space:nowrap}
+.fx-banner.red{color:#ff5a5a}
+.fx-last{animation:fxLast .6s ease-in-out 2}
+@keyframes fxLast{0%,100%{box-shadow:0 0 0 0 rgba(255,80,60,0)}50%{box-shadow:0 0 0 6px rgba(255,80,60,.55),0 0 18px rgba(255,80,60,.7)}}
+.fx-ghost{position:fixed;z-index:60;pointer-events:none}
+.fx-flip{backface-visibility:hidden}
+@media (prefers-reduced-motion:reduce){.fx-last{animation:none;outline:2px solid #ff5a3c}}

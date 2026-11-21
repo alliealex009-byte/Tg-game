@@ -81,7 +81,7 @@
       Object.keys(YC).map((c) => `<div class="yz-r ${my && used(s.you, c) === undefined && g.rolls ? "open" : ""}" data-cat="${c}"><span>${YC[c]}</span>${g.players.map((p) => `<i>${p.card[c] !== undefined ? p.card[c] : (p.uid === g.turn && g.preview[c] !== undefined ? `<em>${g.preview[c]}</em>` : "")}</i>`).join("")}</div>`).join("") +
       `<div class="yz-r head"><span>Total</span>${g.players.map((p) => `<b>${p.total}</b>`).join("")}</div>`;
     K().turnFx(ui, s);
-    K().updateBar(ui, s, (uid) => ({ score: g.players.find((p) => p.uid === uid).total + "pt" }));
+    K().updateBar(ui, s, (uid) => ({ score: "⭐" + g.players.find((p) => p.uid === uid).total }));
     K().setHint(playing(s) ? (my ? (g.rolls ? "Tap dice to HOLD, re-roll, or tap a row to score" : "Roll the dice!") : "Waiting for " + K().nameOf(s, g.turn) + "…") : "👀 Watching");
   }
 
@@ -339,7 +339,7 @@
     if (g.guessed.length && !ui.lastGuessed || (g.guessed.length > (ui.lastGuessed || 0))) sfx("good");
     ui.lastGuessed = g.guessed.length;
     K().turnFx(ui, s);
-    K().updateBar(ui, s, (uid) => ({ score: g.players.find((p) => p.uid === uid).score + "pt" }));
+    K().updateBar(ui, s, (uid) => ({ score: "⭐" + g.players.find((p) => p.uid === uid).score }));
     K().setHint(me ? (mineDraw ? "You're the artist — draw the word, no letters!" : got ? "You got it! Wait for the others" : `Guess the drawing · turn ${g.turn_no}/${g.turns}`) : "👀 Watching");
   }
 

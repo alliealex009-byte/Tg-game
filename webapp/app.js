@@ -338,9 +338,9 @@
         <div style="color:var(--muted);font-size:12px;margin-top:8px">Winner takes the pot (house keeps ${cfg.rake}%). Coins are virtual.</div>
       </div>
       <div class="homeSec"><button class="btn gold" id="h-arcade">🕹 Arcade · earn coins</button>${S.isAdmin ? '<button class="btn" id="h-owner">👑 Owner</button>' : ""}</div>
-      <div class="card"><h3>Multiplayer games <span style="color:var(--muted);font-weight:400">(${Object.keys(cfg.games).length})</span></h3>
-        <div class="cats" id="cats">${["All", ...new Set(Object.values(cfg.games).map((g) => g.cat || "Classic"))].map((c) => `<button class="chip ${c === (S.cat || "All") ? "on" : ""}" data-cat="${c}">${c}</button>`).join("")}</div>
-        <div class="games">${Object.entries(cfg.games).filter(([, g]) => (S.cat || "All") === "All" || (g.cat || "Classic") === S.cat).map(([k, g]) => `
+      <div class="card"><h3>Multiplayer games <span style="color:var(--muted);font-weight:400">(${Object.values(cfg.games).filter((g) => !g.hidden).length})</span></h3>
+        <div class="cats" id="cats">${["All", ...new Set(Object.values(cfg.games).filter((g) => !g.hidden).map((g) => g.cat || "Classic"))].map((c) => `<button class="chip ${c === (S.cat || "All") ? "on" : ""}" data-cat="${c}">${c}</button>`).join("")}</div>
+        <div class="games">${Object.entries(cfg.games).filter(([, g]) => !g.hidden).filter(([, g]) => (S.cat || "All") === "All" || (g.cat || "Classic") === S.cat).map(([k, g]) => `
           <button class="gcard" data-game="${k}"><span class="inf" data-info="${k}">ⓘ</span><div class="em">${g.emoji}</div><div class="t">${esc(g.title)}</div>
           <div class="s">${g.min === g.max ? g.min : g.min + "-" + g.max} players</div></button>`).join("")}</div>
       </div>

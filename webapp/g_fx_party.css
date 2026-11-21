@@ -1,0 +1,27 @@
+/* effects for g_fx_party.js */
+.fxp{position:fixed;border-radius:50%;pointer-events:none;z-index:95}
+.fxflash{position:fixed;inset:0;pointer-events:none;z-index:80;opacity:0}
+.fxpop{position:fixed;pointer-events:none;z-index:96;font:900 26px system-ui,sans-serif;text-shadow:0 2px 6px #000c;white-space:nowrap}
+.fxsweep{position:fixed;left:50%;top:30%;margin-left:-.5em;font-size:64px;pointer-events:none;z-index:92;opacity:0;filter:drop-shadow(0 0 18px #ffd24a)}
+.fxsweep.night{filter:drop-shadow(0 0 18px #9bb4ff)}
+.fxl{display:inline-block;white-space:pre}
+.fx-part{transform-box:fill-box;transform-origin:50% 0}
+.gp-gal,.gp-word span,#gphword{perspective:300px}
+.fx-glow{filter:drop-shadow(0 0 6px currentColor) drop-shadow(0 0 3px #fff)}
+.fx-end{box-shadow:0 0 0 2px #fbbc05,0 0 14px 2px #fbbc05aa;animation:fxend 1s ease-in-out infinite}
+@keyframes fxend{50%{box-shadow:0 0 0 2px #ffe08a,0 0 22px 5px #fbbc05}}
+.dm-hand .dm-t.ok{animation:fxok 1.1s ease-in-out infinite}
+@keyframes fxok{50%{box-shadow:0 0 14px 2px #fbbc05aa;transform:translateY(-3px)}}
+.gd-cell.hot{animation:fxhot 1s ease-in-out infinite}
+@keyframes fxhot{50%{filter:brightness(1.35)}}
+.gd-cell.win{animation:fxhot .6s ease-in-out infinite}
+.gp-time i.low{animation:fxlow .5s ease-in-out infinite}
+@keyframes fxlow{50%{opacity:.45}}
+.gp-trv:has(.gp-time i.low) .gp-qtext{animation:fxurg .5s ease-in-out infinite}
+@keyframes fxurg{50%{transform:scale(1.03);color:#ff8a80}}
+#sctime.fx-urgent{color:#ff5a4f;font-weight:900;display:inline-block;animation:fxurg2 .5s ease-in-out infinite}
+@keyframes fxurg2{50%{transform:scale(1.3)}}
+@media (prefers-reduced-motion:reduce){
+  .fx-end,.dm-hand .dm-t.ok,.gd-cell.hot,.gd-cell.win,.gp-time i.low,.gp-trv:has(.gp-time i.low) .gp-qtext,#sctime.fx-urgent{animation:none!important}
+  .fxsweep{display:none}
+}

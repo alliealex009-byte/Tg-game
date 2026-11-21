@@ -1,0 +1,4 @@
+/* g_fx_boards.css - helpers for g_fx_boards.js (effects are mostly Web Animations; this keeps overflow sane) */
+.gb-sq,.gb-wc,.hole,.mcard,.tcell{overflow:visible}
+.gb-water,.ttt-board{position:relative}
+@media (prefers-reduced-motion: reduce){.gb-water i,.ttt-board i,.hole i,.mcard i,.gb-sq i{display:none!important}}
