@@ -58,7 +58,7 @@ for _k in ("ludo", "snakes", "carrom", "connect4", "tictactoe", "rps", "memory")
 # tests) but is hidden from menus unless SHOW_ALL_GAMES=1.
 FEATURED = [
     "ludo", "uno", "carrom", "chess", "snakes", "checkers", "connect4", "tictactoe", "dominoes", "battleship",
-    "dots", "hangman", "bingo", "teenpatti", "mafia", "scribble", "trivia", "tank", "race", "memory", "crazy8", "cricket", "bluff",
+    "dots", "hangman", "bingo", "teenpatti", "mafia", "scribble", "trivia", "tank", "race", "memory", "crazy8", "cricket", "bluff", "coinduel", "diceduel",
 ]
 LISTED = (
     dict(GAME_INFO)
