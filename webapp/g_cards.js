@@ -83,11 +83,11 @@
     const unoKey = (c) => UO[c[0]] * 100 + (/\d/.test(c[1] || "") ? +c.slice(1) : 20 + c.charCodeAt(1) % 10);
     const sorted = kind === "gofish" ? hand.slice().sort((a, b) => RORD.indexOf(a.slice(0, -1)) - RORD.indexOf(b.slice(0, -1)))
       : kind === "uno" ? hand.slice().sort((a, b) => unoKey(a) - unoKey(b)) : hand;
-    const cw = kind === "uno" ? 64 : 56;
+    const cw = kind === "uno" ? 70 : 56;
     const n = sorted.length, step = n > 1 ? Math.min(cw + 6, (Math.min(window.innerWidth, 440) - 70 - cw) / (n - 1)) : 0;
     box.innerHTML = `<div class="gc-fan ${kind}" style="--ov:${(step - cw).toFixed(1)}px">` + sorted.map((c, i) => {
       const ok = !opts || !opts.playable || play.has(c), mid = (n - 1) / 2, d = i - mid;
-      return `<div class="gc-slot ${mine && ok ? "can" : mine ? "no" : ""}" style="--rot:${(d * Math.min(4, 22 / Math.max(1, n))).toFixed(1)}deg;--dy:${(d * d * 0.5).toFixed(1)}px;z-index:${i}">${face(kind === "uno" ? "uno" : "std", c)}</div>`;
+      return `<div class="gc-slot ${mine && ok ? "can" : mine ? "no" : ""}" style="--i:${i};--rot:${(d * Math.min(2.2, 12 / Math.max(1, n))).toFixed(1)}deg;--dy:${(d * d * 0.25).toFixed(1)}px;z-index:${i}">${face(kind === "uno" ? "uno" : "std", c)}</div>`;
     }).join("") + "</div>";
   }
 
