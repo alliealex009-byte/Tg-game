@@ -70,6 +70,7 @@ GROUP_COMMANDS = [
     BotCommand(command="daily", description="Claim your daily bonus"),
     BotCommand(command="profile", description="Your stats"),
     BotCommand(command="addgroup", description="Add me to another group"),
+    BotCommand(command="ping", description="Check that I am alive in this chat"),
     BotCommand(command="help", description="How to play"),
 ] + [BotCommand(command=GAME_INFO[k]["cmd"], description=f"{GAME_INFO[k]['emoji']} {GAME_INFO[k]['title']} [bet]"[:100])
      for k in ("ludo", "uno", "carrom", "chess", "snakes", "tictactoe", "connect4", "teenpatti") if k in GAME_INFO]
@@ -133,6 +134,28 @@ def build(settings, db, rooms):
     def ensure_user(tg_user):
         name = " ".join(x for x in (tg_user.first_name, tg_user.last_name) if x) or tg_user.username or str(tg_user.id)
         return db.upsert_user(tg_user.id, name[:40], tg_user.username or f"user_{tg_user.id}", None)
+
+    class Trace(BaseMiddleware):
+        async def __call__(self, handler, event, data):
+            txt = getattr(event, "text", None) or ""
+            chat = getattr(event, "chat", None)
+            if txt.startswith("/") and chat is not None and chat.type != ChatType.PRIVATE:
+                log.info("group command %r in %s (%s) from %s", txt.split()[0], chat.id, chat.type.value, getattr(event.from_user, "id", None))
+            return await handler(event, data)
+
+    r.message.outer_middleware(Trace())
+
+    @dp.errors()
+    async def on_error(ev):
+        log.error("handler crashed: %r", ev.exception, exc_info=ev.exception)
+        upd = ev.update
+        m = getattr(upd, "message", None) or getattr(getattr(upd, "callback_query", None), "message", None)
+        if m is not None:
+            try:
+                await m.answer("⚠️ Something went wrong on my side. Please try again in a moment.")
+            except Exception:
+                pass
+        return True
 
     gate = Gate(db, ensure_user)
     r.message.outer_middleware(gate)
@@ -411,7 +434,11 @@ def build(settings, db, rooms):
             f"💰 Bet : {bet if bet else 'Free'}\n\n"
             "Tap the button below to join!"
         )
-        await m.reply(text, reply_markup=Kb(inline_keyboard=[[join_btn(room.code, private, f"🎮 Join {info['title']}")]]))
+        try:
+            await m.reply(text, reply_markup=Kb(inline_keyboard=[[join_btn(room.code, private, f"🎮 Join {info['title']}")]]))
+        except Exception:
+            log.exception("join button rejected, sending a plain link instead")
+            await m.reply(text + f"\n\n👉 https://t.me/{ctx['username']}?start=join_{room.code}", reply_markup=None)
         note_room(m.chat.id, room.code)
 
     def note_room(chat_id: int, code: str):
@@ -470,6 +497,18 @@ def build(settings, db, rooms):
             i = GAME_INFO[rm.game_type]
             rows.append([join_btn(c, private, f"{i['emoji']} {i['title']} · {c}")])
         await m.reply("🎮 <b>Open rooms</b>", reply_markup=Kb(inline_keyboard=rows))
+
+    @r.message(Command("ping"))
+    async def ping(m: Message):
+        lines = [f"🏓 Pong! I can read this chat.", f"Chat type: <code>{m.chat.type.value}</code>", f"Chat id: <code>{m.chat.id}</code>"]
+        if m.chat.type != ChatType.PRIVATE:
+            try:
+                me_member = await bot.get_chat_member(m.chat.id, bot.id)
+                lines.append(f"My role here: <b>{me_member.status}</b>" + ("" if me_member.status == "administrator" else " (promote me to admin for the best experience)"))
+            except Exception:
+                lines.append("My role here: unknown")
+        lines.append("Join links: " + ("Mini App links ✅" if ctx["app_ok"] else "in-chat buttons ✅"))
+        await m.reply("\n".join(lines))
 
     @r.message(Command("addgroup"))
     async def addgroup(m: Message):
@@ -847,12 +886,22 @@ async def set_commands(bot):
 
 
 async def prepare(bot: Bot, settings, ctx):
-    """Fetch the bot username, register commands, descriptions and the menu button."""
+    """Fetch the bot username, register commands, descriptions and the menu button.
+    Every optional step is isolated: a failure in one must never stop the bot from polling."""
     me = await bot.get_me()
     ctx["username"] = me.username
-    await bot.delete_webhook(drop_pending_updates=True)
-    await set_commands(bot)
-    await detect_app(settings, ctx)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+    except Exception:
+        log.exception("delete_webhook failed")
+    try:
+        await set_commands(bot)
+    except Exception:
+        log.exception("could not register command menus (the commands still work when typed)")
+    try:
+        await detect_app(settings, ctx)
+    except Exception:
+        log.exception("Mini App probe failed; using safe buttons")
     try:
         await bot.set_my_short_description(f"{len(LISTED)}+ multiplayer games: Ludo, Chess, UNO, Teen Patti, Mafia. Owner: @{settings.owner_username}")
         await bot.set_my_description(
@@ -862,8 +911,11 @@ async def prepare(bot: Bot, settings, ctx):
     except Exception:
         log.info("could not set bot descriptions")
     if settings.webapp_url.startswith("https://"):
-        await bot.set_chat_menu_button(
-            menu_button=MenuButtonWebApp(text="🎮 Play", web_app=WebAppInfo(url=settings.webapp_url))
-        )
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="🎮 Play", web_app=WebAppInfo(url=settings.webapp_url))
+            )
+        except Exception:
+            log.exception("could not set the menu button")
     else:
         log.warning("WEBAPP_URL must be an https:// URL for Telegram mini apps")

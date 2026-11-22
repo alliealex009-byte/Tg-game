@@ -63,6 +63,8 @@ HOWTO = {
     "wyr": ["Everyone sees the same two options and votes at once.", "Players on the bigger side score a point — go with the crowd!", "A tie scores nobody. Most points after 8 rounds wins."],
     "guessnum": ["The bot picks a secret number from 1 to 100.", "Take turns guessing — you're told higher or lower, and the range shrinks.", "Whoever finds the number wins."],
     "emojiquiz": ["Guess the movie, phrase or thing from the emojis.", "Type your answer — the first correct one wins the round.", "First to 3 round wins."],
+    "cricket": ["Gully cricket on the school bench! Batter and bowler both secretly pick 1-6 at the same moment.", "Same number = OUT. Different numbers = the batter scores the number he picked.", "2 overs (12 balls) and 2 wickets each. Chase the target to win!"],
+    "bluff": ["Cards are dealt to everyone. On your turn put 1-4 cards face-down and claim they are the next rank (A, 2, 3...).", "Anyone can call BLUFF! If you lied you pick up the whole pile, if you were honest the caller does.", "First to empty their hand wins. Lie smartly!"],
     "penalty": ["5 kicks each, then sudden death. Every kick the shooter picks left, centre or right while the keeper dives at the same time.", "Same side = SAVED. Otherwise it's a GOAL.", "Don't be predictable!"],
     "scribble": ["One player is the artist and secretly sees a word — draw it on the canvas (no letters or numbers!).", "Everyone else types guesses. Faster correct guesses earn more points, and the artist scores for every player who gets it.", "Everyone takes a turn drawing. Highest score wins."],
 }
