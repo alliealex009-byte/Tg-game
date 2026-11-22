@@ -12,11 +12,11 @@
     HUB.stopArcade();
     let msg;
     try {
-      const r = await post("/api/arcade/claim", { game, score });
-      msg = r.coins ? `+${r.coins} coins 🎉` : "Daily arcade limit reached";
+      const r = await post("/api/arcade/claim", { game, score, gid: HUB.S.gid });
+      msg = (r.coins ? `+${r.coins} coins 🎉` : "Daily arcade limit reached") + (r.group ? " · counted on your group board 🏆" : "");
       if (HUB.S.me) HUB.S.me.coins = r.balance;
       if (r.coins) { HUB.sfx.win(); HUB.confetti(40); }
-    } catch (e) { msg = e.message; }
+    } catch (e) { msg = /too short/i.test(e.message) ? "That run was too short to pay coins - play a little longer!" : e.message; }
     box.insertAdjacentHTML("beforeend", `<div class="xres"><div class="big">Score ${score}</div><div>${HUB.esc(msg)}</div>
       <button class="btn primary" id="again">Play again</button></div>`);
     $("#again").addEventListener("click", () => games[game]());

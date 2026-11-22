@@ -5,6 +5,17 @@
   const EMOJI = ["😂", "🔥", "👏", "😮", "😡", "❤️", "👍", "😭", "🎉", "🤯", "💀", "🙏"];
   let dock = null, tray = false;
 
+  let trayTimer = 0, lastReact = 0;
+  function setTray(on) {
+    tray = !!on;
+    const t = $("#xtray"); if (!t) return;
+    t.classList.toggle("hidden", !tray);
+    clearTimeout(trayTimer);
+    if (tray) {
+      [...t.children].forEach((b, i) => { b.style.animationDelay = i * 22 + "ms"; });
+      trayTimer = setTimeout(() => setTray(false), 6000);     // never leave it covering the game
+    }
+  }
   function ensureDock() {
     if (dock) return dock;
     dock = document.createElement("div");
@@ -17,14 +28,21 @@
     dock.addEventListener("click", (ev) => {
       const b = ev.target.closest("button"); if (!b) return;
       const s = HUB.S.room;
-      if (b.dataset.e) { HUB.send({ t: "react", e: b.dataset.e }); HUB.haptic(); return; }
-      if (b.id === "xd-react") { tray = !tray; $("#xtray").classList.toggle("hidden", !tray); }
+      if (b.dataset.e) {
+        const now = Date.now();
+        if (now - lastReact > 450) { lastReact = now; HUB.send({ t: "react", e: b.dataset.e }); HUB.haptic(); }
+        setTray(false);                                         // close right after sending
+        return;
+      }
+      if (b.id === "xd-react") setTray(!tray);
       else if (b.id === "xd-help" && s) showHowto(s.game_type);
       else if (b.id === "xd-watch" && s) {
         const names = (s.watchers || []).map((w) => w.name).join(", ");
         HUB.toast(s.watching ? "👁 Watching: " + names : "Nobody is watching yet");
       }
     });
+    // tap anywhere else (the game, the background) closes the tray
+    document.addEventListener("pointerdown", (ev) => { if (tray && !ev.target.closest("#xdock")) setTray(false); }, true);
     return dock;
   }
 
@@ -47,7 +65,7 @@
     if (dock) dock.classList.remove("on");
     document.body.classList.remove("in-room");
     const sb = $("#xspec"); if (sb) sb.remove();
-    tray = false; if ($("#xtray")) $("#xtray").classList.add("hidden");
+    setTray(false);
   };
 
   HUB.onReact = function (m) {
@@ -159,6 +177,12 @@
     { k: "paws", e: "🐾", t: "PixelPaws", d: "Care for a pet, earn treats" },
     { k: "world", e: "🏘️", t: "TinyWorld", d: "Build a tiny town" },
     { k: "realm", e: "🏰", t: "MiniRealm", d: "Send heroes on missions" },
+    { k: "snake", e: "🐍", t: "Snake", d: "Swipe to eat apples, grow longer" },
+    { k: "flap", e: "🐤", t: "Flappy Wing", d: "Tap to fly through the pipes" },
+    { k: "galaxy", e: "🚀", t: "Galaxy Shooter", d: "Drag your ship, blast aliens" },
+    { k: "stack", e: "🏗️", t: "Stack Tower", d: "Drop blocks, build high" },
+    { k: "roadrush", e: "🏎️", t: "Road Rush", d: "Dodge traffic, grab coins" },
+    { k: "mole", e: "🔨", t: "Whack-a-Mole", d: "Whack moles, avoid bombs" },
   ];
   HUB.openArcade = function () {
     const o = overlay("🕹 Arcade", `<p class="xnote">Solo games that pay coins (daily cap applies). Anti-cheat runs on the server.</p>

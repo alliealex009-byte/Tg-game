@@ -830,7 +830,12 @@
     } catch (e) { return fatal(e.message || "Could not connect to the server"); }
 
     const sp = (tg && tg.initDataUnsafe && tg.initDataUnsafe.start_param) || params.get("room") || params.get("startapp") || "";
-    if (/^[0-9a-fA-F]{8}$/.test(sp)) joinRoom(sp.toUpperCase());
+    const am = /^arc_([a-z]+)(?:_n(\d+))?$/.exec(sp);
+    const arc = params.get("arcade") || (am ? am[1] : "");
+    const gq = params.get("g") || (am && am[2] ? "-" + am[2] : "");
+    if (/^-\d+$/.test(gq)) S.gid = parseInt(gq, 10);
+    if (arc) { showHome(); setTimeout(() => { try { HUB.arcadeGames && HUB.arcadeGames[arc] ? HUB.arcadeGames[arc]() : HUB.openArcade(); } catch (e) { HUB.openArcade(); } }, 250); }
+    else if (/^[0-9a-fA-F]{8}$/.test(sp)) joinRoom(sp.toUpperCase());
     else { showHome(); if (params.get("owner") && S.isAdmin) HUB.openOwner(); }
   }
   Object.assign(window.HUB, { api, tg, refreshHome: () => renderHome(), S, send, esc, sleep, sfx, haptic, avatarInner, handle, topbarHTML, diceHTML, toast, tumble, confetti, tone, noise });
