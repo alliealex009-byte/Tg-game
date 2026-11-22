@@ -428,6 +428,58 @@ class Batch5Tests(unittest.TestCase):
         self.assertEqual(g.score[2], 1)
         self.assertEqual(norm("Spider-Man!"), "spider man")
 
+    def test_cricket_rules(self):
+        from app.games.cricket import CricketGame
+        g = CricketGame([1, 2], rng=random.Random(1))
+        g.handle(1, {"t": "num", "n": 4}); g.handle(2, {"t": "num", "n": 2})      # batter 1 scores 4
+        self.assertEqual(g.runs[1], 4)
+        g.handle(1, {"t": "num", "n": 3}); g.handle(2, {"t": "num", "n": 3})      # same number: out
+        self.assertTrue(g.last_ball["out"])
+        self.assertEqual(g.wkts, 1)
+        with self.assertRaises(GameError):
+            g.handle(1, {"t": "num", "n": 7})
+        g.handle(1, {"t": "num", "n": 1}); g.handle(2, {"t": "num", "n": 1})      # 2nd wicket ends innings
+        self.assertEqual(g.innings, 2)
+        self.assertEqual(g.target, 4)
+        self.assertEqual(g.batter, 2)
+        g.handle(2, {"t": "num", "n": 6}); g.handle(1, {"t": "num", "n": 5})      # chaser passes the target
+        self.assertTrue(g.finished)
+        self.assertEqual(g.winner, 2)
+        for sd in range(100):
+            q = CricketGame([1, -1], rng=random.Random(sd))
+            for _ in range(60):
+                if q.finished:
+                    break
+                q.auto_play()
+            self.assertTrue(q.finished)
+
+    def test_bluff_rules(self):
+        from app.games.bluff import BluffGame
+        g = BluffGame([1, 2, 3], rng=random.Random(3))
+        self.assertEqual(g.rank, "A")
+        mine = g.hands[1][:2]
+        n1, n2 = len(g.hands[1]), len(g.hands[2])
+        with self.assertRaises(GameError):
+            g.handle(2, {"t": "play", "cards": g.hands[2][:1]})          # not your turn
+        g.handle(1, {"t": "play", "cards": mine})
+        self.assertEqual(g.claim["n"], 2)
+        view = g.view(1)
+        self.assertEqual(len(view["hand"]), n1 - 2)
+        self.assertNotIn("cards", view["claim"])                          # the played cards stay hidden
+        liar = any(c[:-1] != "A" for c in mine)
+        g.handle(2, {"t": "bluff"})
+        self.assertEqual(g.last_event["liar"], liar)
+        loser = 1 if liar else 2
+        self.assertEqual(len(g.hands[loser]), (n1 - 2 + 2) if loser == 1 else (n2 + 2))
+        self.assertEqual(sum(len(h) for h in g.hands.values()) + len(g.pile), 52)
+        for sd in range(60):
+            q = BluffGame([1, -1, -2, -3], rng=random.Random(sd))
+            for _ in range(5000):
+                if q.finished:
+                    break
+                q.auto_play()
+            self.assertTrue(q.finished)
+
     def test_penalty(self):
         from app.games.penalty import PenaltyGame
         g = PenaltyGame([1, 2], rng=random.Random(1))

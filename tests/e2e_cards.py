@@ -23,7 +23,7 @@ async def alex_action(page, room, key):
     if key in ("uno", "crazy8"):
         await page.wait_for_selector("#gch .gc-slot.can, #gca button[data-t=draw], #gca button[data-t=pass]", timeout=60000)
         if await page.query_selector("#gch .gc-slot.can"):
-            await page.click("#gch .gc-slot.can >> nth=0")
+            await page.click("#gch .gc-slot.can >> nth=0", position={"x": 8, "y": 50})
             if await page.query_selector(".gc-modal .gc-pb"):
                 await page.click(".gc-modal .gc-pb >> nth=0")
         else:

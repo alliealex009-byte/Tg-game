@@ -27,6 +27,7 @@ def install_stubs():
     class Dispatcher:
         def __init__(self): pass
         def include_router(self, r): self.router = r
+        def errors(self, *a, **k): return lambda f: f
 
     class Bot:
         def __init__(self, *a, **k):
@@ -246,6 +247,16 @@ class BotHandlerTests(unittest.TestCase):
         self.run_(self.h["cb_play"](c))
         b = self.bot.send_message.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
         self.assertIn("t.me/TestBot/play?startapp=", b.url)
+
+    def test_ping_and_plain_link_fallback(self):
+        m = msg(2)
+        self.run_(self.h["ping"](m))
+        self.assertIn("Pong", m.reply.call_args.args[0])
+        g = self._group_msg()
+        g.reply = AsyncMock(side_effect=[Exception("BUTTON_URL_INVALID"), None])   # first send (with button) is rejected
+        self.run_(self.h["play"](g, NS(args=None, command="playludo")))
+        self.assertEqual(g.reply.call_count, 2)                                    # fell back to a plain link
+        self.assertIn("start=join_", g.reply.call_args.args[0])
 
     def test_bot_replaced_when_lobby_full(self):
         r = self.rooms.create(1, "tictactoe", 0)
