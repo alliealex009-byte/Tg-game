@@ -169,4 +169,72 @@
     K().setHint(me ? (isMyPlay(s) ? `Pick 1-4 cards and claim they are ${RN[g.rank]} — lie if you must!` : isMyCall(s) ? "Do you believe it? Call BLUFF to check!" : "Waiting…") : "👀 Watching");
   }
   HUB.UI.bluff = { build: buildBluff, apply: applyBluff };
+
+  /* ================================ COIN FLIP / DICE DUEL (betting) ================================ */
+  const DIE = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+  function buildDuel(kind) {
+    return function (s) {
+      K().newUI(kind, s, { lastSeq: 0, myPick: null, busy: false });
+      const coin = kind === "coinduel";
+      K().shell(s, `<div class="du-box"><div class="du-round" id="duround"></div>
+        <div class="du-stage" id="dustage">${coin ? '<div class="du-coin" id="ducoin"><b>H</b></div><div class="du-coin two" id="ducoin2"><b>T</b></div>' : '<div class="du-die" id="dudie1">🎲</div><div class="du-vs">VS</div><div class="du-die" id="dudie2">🎲</div>'}</div>
+        <div class="du-msg" id="dumsg"></div>
+        <div class="du-pad" id="dupad">${coin ? '<button data-s="heads">🪙<b>HEADS</b></button><button data-s="tails">🪙<b>TAILS</b></button>' : '<button data-r="1" class="roll">🎲<b>ROLL</b></button>'}</div></div>`);
+      $("#dupad").onclick = (e) => {
+        const b = e.target.closest("button"), s2 = room(), ui = HUB.S.ui;
+        if (!b || b.disabled || ui.busy || !playing(s2) || s2.status !== "playing" || s2.game.picked[s2.you]) return;
+        ui.myPick = b.dataset.s || "roll";
+        HUB.send(coin ? { t: "call", side: b.dataset.s } : { t: "roll" }); HUB.haptic("medium"); sfx("pop");
+        document.querySelectorAll("#dupad button").forEach((x) => x.classList.toggle("sel", x === b));
+        $("#dumsg").textContent = "Locked in — waiting for your opponent…";
+      };
+    };
+  }
+  async function duelReveal(s, lr, coin) {
+    const ui = HUB.S.ui; ui.busy = true;
+    const ids = s.game.players.map((p) => p.uid), me = ids.includes(s.you);
+    const mine = me ? s.you : ids[0], other = ids.find((u) => u !== mine);
+    const msg = $("#dumsg");
+    msg.textContent = coin ? "Flipping…" : "Rolling…";
+    if (coin) {
+      const c = $("#ducoin");
+      c.querySelector("b").textContent = "?";
+      anim(c, [{ transform: "translateY(0) rotateY(0)" }, { transform: "translateY(-120px) rotateY(900deg)" }, { transform: "translateY(0) rotateY(1800deg)" }], { duration: 1100, easing: "ease-out" });
+      for (let i = 0; i < 5; i++) { tone(500 + i * 70, 0.06, "triangle", 0.1); await sleep(200); }
+      c.querySelector("b").textContent = lr.coin === "heads" ? "H" : "T"; c.classList.toggle("tails", lr.coin === "tails");
+      sfx("hit");
+      msg.textContent = `It's ${lr.coin.toUpperCase()}! You called ${lr.picks[mine]}, ${nm(s, other)} called ${lr.picks[other]}.`;
+    } else {
+      const d1 = $("#dudie1"), d2 = $("#dudie2");
+      for (let i = 0; i < 8; i++) {
+        d1.textContent = DIE[1 + Math.floor(Math.random() * 6)]; d2.textContent = DIE[1 + Math.floor(Math.random() * 6)];
+        anim(d1, [{ transform: "rotate(-25deg)" }, { transform: "rotate(25deg)" }], { duration: 110 }); anim(d2, [{ transform: "rotate(25deg)" }, { transform: "rotate(-25deg)" }], { duration: 110 });
+        tone(280 + i * 30, 0.05, "square", 0.08); await sleep(120);
+      }
+      d1.textContent = DIE[lr.dice[mine]]; d2.textContent = DIE[lr.dice[other]];
+      anim(d1, [{ transform: "scale(1.5)" }, { transform: "none" }], { duration: 300 }); anim(d2, [{ transform: "scale(1.5)" }, { transform: "none" }], { duration: 300 });
+      sfx("hit");
+    }
+    const v = lr.winner == null ? "🤝 Tie — go again" : lr.winner === s.you ? "🎉 You win the round!" : (me ? nm(s, lr.winner) + " wins the round" : nm(s, lr.winner) + " wins the round");
+    msg.textContent += " " + v; msg.classList.add("pulse");
+    if (lr.winner === s.you) { sfx("win"); HUB.haptic("success"); }
+    await sleep(1500); msg.classList.remove("pulse"); ui.busy = false;
+    document.querySelectorAll("#dupad button").forEach((x) => x.classList.remove("sel"));
+  }
+  function applyDuel(coin) {
+    return function (s) {
+      const ui = HUB.S.ui, g = s.game, lr = g.last_round, me = playing(s);
+      $("#duround").textContent = `Round ${Math.min(g.round, 9)} · first to ${g.win_score} wins`;
+      if (ui.first) { ui.first = false; if (lr) ui.lastSeq = lr.seq; }
+      else if (lr && lr.seq > ui.lastSeq) { ui.lastSeq = lr.seq; duelReveal(s, lr, coin); }
+      const ok = me && s.status === "playing" && !g.picked[s.you];
+      if (ok && !ui.busy) { $("#dumsg").textContent = coin ? "Call it: heads or tails?" : "Tap ROLL — highest die wins the round!"; }
+      document.querySelectorAll("#dupad button").forEach((b) => { b.disabled = !ok; });
+      $("#dupad").classList.toggle("hidden", !me);
+      K().updateBar(ui, s, (uid) => ({ score: g.players.find((p) => p.uid === uid).score + "/" + g.win_score }));
+      K().setHint(me ? "Server-side flip: nobody can cheat" : "👀 Watching the duel");
+    };
+  }
+  HUB.UI.coinduel = { build: buildDuel("coinduel"), apply: applyDuel(true) };
+  HUB.UI.diceduel = { build: buildDuel("diceduel"), apply: applyDuel(false) };
 })();

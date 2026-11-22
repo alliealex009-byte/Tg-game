@@ -6,7 +6,7 @@
   HUB.overlay2 = (t, h) => HUB.overlay(t, h, HUB.openArcade);
   let raf = 0, timers = [];
   HUB.stopArcade = function () { cancelAnimationFrame(raf); timers.forEach(clearInterval); timers = []; };
-  const post = (p, b) => HUB.api(p, { method: "POST", body: b || {} });
+  const post = (p, b) => HUB.api(p, { method: "POST", body: p === "/api/arcade/start" ? Object.assign({ gid: HUB.S.gid }, b || {}) : (b || {}) });
 
   async function claim(game, score, box) {
     HUB.stopArcade();

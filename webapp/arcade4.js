@@ -227,3 +227,193 @@
     };
   });
 })();
+
+/* ---- Batch 5: original look-alikes of classic browser-doodle games (own art & code): Cricket Blitz, Pony Rush, Pani Puri Rush, Memo Flip ---- */
+(function () {
+  const HUB = window.HUB, A = HUB.arc, games = A.games;
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const sfx = (n) => { try { HUB.sfx[n](); } catch (e) { /* ignore */ } };
+  const tone = (...a) => { try { HUB.tone(...a); } catch (e) { /* ignore */ } };
+  const mk = (key, title, W, H, setup) => {
+    // reuse the harness from the first batch through a tiny local copy
+    return async function () {
+      const g = A.canvasGame(title, key, W, H);
+      try { await A.post("/api/arcade/start", { game: key }); } catch (e) { return HUB.toast(e.message); }
+      const { c, ctx, w, h } = g, fx = [], S = { shake: 0, over: false, t: 0 };
+      const burst = (x, y, col, n, sp) => { for (let i = 0; i < n; i++) { const a = rnd(0, 6.28), v = rnd(0.3, 1) * (sp || 120); fx.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, col, r: rnd(1.5, 3.5) }); } };
+      const finish = (score) => { if (S.over) return; S.over = true; setTimeout(() => A.claim(key, Math.max(0, Math.floor(score)), g.box), 700); };
+      const api = { w, h, hud: (t) => { g.hud.textContent = t; }, burst, finish, S, sfx, tone, shake: (n) => { S.shake = n; }, box: g.box };
+      const game = setup(api);
+      const pos = (ev) => { const r = c.getBoundingClientRect(), t = ev.touches ? ev.touches[0] : ev; return [t.clientX - r.left, t.clientY - r.top]; };
+      c.addEventListener("pointerdown", (ev) => { const [x, y] = pos(ev); game.down && game.down(x, y); });
+      c.addEventListener("touchmove", (ev) => ev.preventDefault(), { passive: false });
+      const onKey = (ev) => { if (!document.body.contains(c)) return removeEventListener("keydown", onKey); game.key && game.key(ev.key); };
+      addEventListener("keydown", onKey);
+      let last = performance.now();
+      (function loop(now) {
+        if (!document.body.contains(c)) return;
+        const dt = Math.min(0.033, (now - last) / 1000); last = now; S.t += dt;
+        if (!S.over) game.update(dt);
+        ctx.save(); S.shake *= 0.86; if (S.shake > 0.3) ctx.translate(rnd(-S.shake, S.shake), rnd(-S.shake, S.shake));
+        game.draw(ctx);
+        for (let i = fx.length - 1; i >= 0; i--) { const p = fx[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * 2; if (p.life <= 0) { fx.splice(i, 1); continue; } ctx.globalAlpha = p.life; ctx.fillStyle = p.col; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill(); }
+        ctx.globalAlpha = 1; ctx.restore();
+        if (S.over) { ctx.fillStyle = "#000a"; ctx.fillRect(0, 0, w, h); ctx.fillStyle = "#fff"; ctx.font = "800 30px system-ui"; ctx.textAlign = "center"; ctx.fillText("GAME OVER", w / 2, h / 2); }
+        A.raf(requestAnimationFrame(loop));
+      })(last);
+    };
+  };
+  const sky = (ctx, w, h, a, b) => { const gr = ctx.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, a); gr.addColorStop(1, b); ctx.fillStyle = gr; ctx.fillRect(0, 0, w, h); };
+
+  /* ------------------------------ CRICKET BLITZ ------------------------------ */
+  games.cricketblitz = mk("cricketblitz", "🏏 Cricket Blitz", 340, 520, (a) => {
+    // 12 balls, 3 wickets. Tap when the ball reaches the bat: dead centre = SIX, near = FOUR, rough = 1-2, way off = OUT
+    let balls = 12, wk = 3, runs = 0, ball = null, wait = 1.0, swing = 0, msg = "", msgT = 0, crowd = 0;
+    const hitY = a.h - 120;
+    const bowl = () => { ball = { t: 0, dur: rnd(0.75, 1.35) - Math.min(0.3, (12 - balls) * 0.025), x: a.w / 2 + rnd(-30, 30), spin: rnd(-1, 1), done: false }; };
+    const result = (text, col) => { msg = text; msgT = 1.1; a.hud(`🏏 ${runs}/${3 - wk}   ⚾ ${balls} left`); a.S.col = col; };
+    return {
+      down() {
+        if (swing > 0 || !ball || ball.done) return; swing = 0.28; ball.done = true;
+        const d = ball.t - 1, ad = Math.abs(d);          // d<0 early, d>0 late (1 = on the bat)
+        let r = 0;
+        if (ad < 0.045) { r = 6; } else if (ad < 0.1) { r = 4; } else if (ad < 0.17) { r = ball.t < 1 ? 2 : 1; } else if (ad < 0.26) { r = ball.t < 1 ? 1 : 2; } else r = -1;
+        if (r < 0) { wk--; result("OUT!", "#ff5252"); a.sfx("bad"); a.shake(10); a.burst(a.w / 2, hitY, "#ff5252", 18); }
+        else { runs += r; result(r === 6 ? "SIX!" : r === 4 ? "FOUR!" : r + (r === 1 ? " run" : " runs"), r >= 4 ? "#ffd24a" : "#fff"); a.sfx(r === 6 ? "win" : r === 4 ? "good" : "place"); a.burst(a.w / 2, hitY, r >= 4 ? "#ffd24a" : "#fff", r * 4); if (r >= 4) crowd = 1; ball.fly = { r }; }
+        balls--; ball.res = true; if (balls <= 0 || wk <= 0) { setTimeout(() => a.finish(runs), 900); this.end = true; }
+      },
+      key(k) { if (k === " ") this.down(); },
+      update(dt) {
+        swing = Math.max(0, swing - dt); msgT = Math.max(0, msgT - dt); crowd = Math.max(0, crowd - dt);
+        if (this.end) { if (ball && ball.fly) ball.t += dt; return; }
+        if (!ball) { wait -= dt; if (wait <= 0) bowl(); return; }
+        ball.t += dt / ball.dur;
+        if (ball.done) { if (ball.t > 1.6 || (ball.res && ball.t > 1.5)) { ball = null; wait = 0.7; } return; }
+        if (ball.t > 1.3) { ball.done = true; ball.res = true; wk--; balls--; result("BOWLED!", "#ff5252"); a.sfx("bad"); a.shake(10); if (balls <= 0 || wk <= 0) { setTimeout(() => a.finish(runs), 900); this.end = true; } }
+      },
+      draw(ctx) {
+        sky(ctx, a.w, a.h, "#1a4fa0", "#79c4ff"); ctx.fillStyle = "#2e7d32"; ctx.fillRect(0, a.h * 0.28, a.w, a.h);
+        ctx.fillStyle = crowd > 0 ? "#ffd24a" : "#ffffff55"; for (let i = 0; i < 34; i++) ctx.fillRect(i * 10 + (Math.sin(a.S.t * 6 + i) * (crowd > 0 ? 4 : 1)), a.h * 0.26 - (i % 3) * 5 - (crowd > 0 ? Math.abs(Math.sin(a.S.t * 10 + i)) * 8 : 0), 6, 6);
+        ctx.fillStyle = "#c9a66b"; ctx.beginPath(); ctx.moveTo(a.w / 2 - 22, a.h * 0.3); ctx.lineTo(a.w / 2 + 22, a.h * 0.3); ctx.lineTo(a.w / 2 + 80, a.h); ctx.lineTo(a.w / 2 - 80, a.h); ctx.fill();
+        ctx.fillStyle = "#fff"; ctx.fillRect(a.w / 2 - 14, hitY + 36, 28, 3);                          // crease
+        // bowler
+        ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(a.w / 2, a.h * 0.31, 7, 0, 7); ctx.fill(); ctx.fillRect(a.w / 2 - 5, a.h * 0.31 + 6, 10, 20);
+        // ball
+        if (ball && !ball.done) {
+          const t = Math.min(1.3, ball.t), y = a.h * 0.33 + (hitY - a.h * 0.33) * t, x = a.w / 2 + (ball.x - a.w / 2) * (1 - t) * 0.2 + Math.sin(t * 6) * ball.spin * 8 * t;
+          const r = 4 + t * 12; ctx.fillStyle = "#0004"; ctx.beginPath(); ctx.ellipse(x, y + r, r, r * 0.4, 0, 0, 7); ctx.fill();
+          ctx.fillStyle = "#d32f2f"; ctx.beginPath(); ctx.arc(x, y - Math.abs(Math.sin(t * 9)) * 18 * (1 - t), r, 0, 7); ctx.fill();
+        } else if (ball && ball.fly) { const f = Math.min(1, (ball.t - 1)), r = ball.fly.r; ctx.fillStyle = "#d32f2f"; ctx.beginPath(); ctx.arc(a.w / 2 + f * (r === 6 ? 120 : 90) * (r % 2 ? 1 : -1), hitY - f * (r === 6 ? 380 : 150) + f * f * 100, Math.max(2, 14 - f * 10), 0, 7); ctx.fill(); }
+        // batter + bat
+        ctx.fillStyle = "#1565c0"; ctx.fillRect(a.w / 2 - 12, hitY + 10, 24, 44); ctx.fillStyle = "#ffcc80"; ctx.beginPath(); ctx.arc(a.w / 2, hitY, 12, 0, 7); ctx.fill();
+        ctx.save(); ctx.translate(a.w / 2 + 14, hitY + 22); ctx.rotate(swing > 0 ? -1.9 + (0.28 - swing) * 14 : -0.4); ctx.fillStyle = "#d7a65e"; ctx.fillRect(-4, -56, 8, 56); ctx.restore();
+        // timing hint ring
+        if (ball && !ball.done) { ctx.strokeStyle = "#ffffff55"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(a.w / 2, hitY, 34, 0, 7); ctx.stroke(); }
+        if (msgT > 0) { ctx.globalAlpha = Math.min(1, msgT * 2); ctx.fillStyle = a.S.col || "#fff"; ctx.font = `900 ${42 + (1.1 - msgT) * 18}px system-ui`; ctx.textAlign = "center"; ctx.fillText(msg, a.w / 2, a.h * 0.55); ctx.globalAlpha = 1; }
+        if (balls === 12 && !ball) { ctx.fillStyle = "#fff"; ctx.font = "700 16px system-ui"; ctx.textAlign = "center"; ctx.fillText("Tap when the ball reaches the bat!", a.w / 2, a.h - 30); }
+      },
+    };
+  });
+
+  /* -------------------------------- PONY RUSH -------------------------------- */
+  games.ponyrush = mk("ponyrush", "🐎 Pony Rush", 340, 400, (a) => {
+    const gy = a.h - 70, p = { y: gy, vy: 0, air: false }; let dist = 0, speed = 200, obs = [], gold = [], spawn = 1, score = 0, coins = 0, dj = 0;
+    const jump = () => { if (!p.air) { p.vy = -560; p.air = true; a.sfx("pop"); a.burst(80, gy + 10, "#d7ccc8", 6, 50); } };
+    return {
+      down: jump, key(k) { if (k === " " || k === "ArrowUp") jump(); },
+      update(dt) {
+        speed = Math.min(430, 200 + a.S.t * 6); dist += speed * dt; score = Math.floor(dist / 10) + coins * 5; spawn -= dt;
+        p.vy += 1500 * dt; p.y += p.vy * dt; if (p.y >= gy) { p.y = gy; p.vy = 0; p.air = false; }
+        if (spawn <= 0) { spawn = rnd(0.9, 1.7) * (250 / speed + 0.55); const r = Math.random(); if (r < 0.7) obs.push({ x: a.w + 30, w: rnd(22, 34), h: rnd(28, 52), t: Math.random() < 0.5 ? "f" : "c" }); else gold.push({ x: a.w + 30, y: gy - rnd(40, 120) }); }
+        obs.forEach((o) => { o.x -= speed * dt; }); gold.forEach((g) => { g.x -= speed * dt; });
+        for (const o of obs) if (80 + 18 > o.x && 80 - 18 < o.x + o.w && p.y + 6 > gy + 30 - o.h) { a.sfx("capture"); a.shake(12); a.burst(80, p.y, "#ffb74d", 26, 180); return a.finish(score); }
+        for (let i = gold.length - 1; i >= 0; i--) if (Math.abs(gold[i].x - 80) < 24 && Math.abs(gold[i].y - (p.y - 20)) < 34) { coins++; a.sfx("cash"); a.burst(gold[i].x, gold[i].y, "#ffd24a", 10); gold.splice(i, 1); }
+        obs = obs.filter((o) => o.x > -60); gold = gold.filter((g) => g.x > -30); dj += dt * speed * 0.05;
+        a.hud(`🐎 ${score}   🪙 ${coins}`);
+      },
+      draw(ctx) {
+        sky(ctx, a.w, a.h, "#ffcc80", "#ffe0b2"); ctx.fillStyle = "#ffb74d55"; ctx.beginPath(); ctx.arc(250, 80, 40, 0, 7); ctx.fill();
+        ctx.fillStyle = "#bf8a4e55"; for (let i = 0; i < 4; i++) { const x = ((i * 130 - dist * 0.2) % (a.w + 160)); ctx.beginPath(); ctx.moveTo(x - 80, gy + 30); ctx.lineTo(x, gy - 40 - (i % 2) * 30); ctx.lineTo(x + 80, gy + 30); ctx.fill(); }
+        ctx.fillStyle = "#8d6e63"; ctx.fillRect(0, gy + 30, a.w, a.h); ctx.fillStyle = "#a1887f"; for (let x = -(dist % 40); x < a.w; x += 40) ctx.fillRect(x, gy + 40, 20, 3);
+        obs.forEach((o) => { if (o.t === "f") { ctx.fillStyle = "#6d4c41"; ctx.fillRect(o.x, gy + 30 - o.h, 5, o.h); ctx.fillRect(o.x + o.w - 5, gy + 30 - o.h, 5, o.h); ctx.fillRect(o.x, gy + 30 - o.h + 8, o.w, 5); ctx.fillRect(o.x, gy + 30 - o.h + 22, o.w, 5); } else { ctx.fillStyle = "#43a047"; ctx.fillRect(o.x + o.w / 2 - 5, gy + 30 - o.h, 10, o.h); ctx.fillRect(o.x, gy + 30 - o.h + 12, o.w, 8); } });
+        gold.forEach((g) => { ctx.fillStyle = "#ffd24a"; ctx.beginPath(); ctx.ellipse(g.x, g.y, 10 * Math.abs(Math.cos(a.S.t * 6)) + 2, 10, 0, 0, 7); ctx.fill(); });
+        const lg = Math.sin(dj * 1.6) * 14; ctx.save(); ctx.translate(80, p.y - 20);
+        ctx.fillStyle = "#6d4c41"; ctx.beginPath(); ctx.ellipse(0, 0, 26, 14, 0, 0, 7); ctx.fill();                       // body
+        ctx.beginPath(); ctx.ellipse(24, -14, 11, 8, -0.5, 0, 7); ctx.fill(); ctx.fillStyle = "#3e2723"; ctx.fillRect(14, -26, 5, 16); // head+mane
+        ctx.fillStyle = "#3e2723"; ctx.fillRect(-24, -4, 10, 4); const leg = (x, o) => { ctx.fillRect(x, 8, 5, 22 + (p.air ? 0 : o)); }; leg(-18, lg); leg(-8, -lg); leg(10, -lg); leg(20, lg);
+        ctx.fillStyle = "#e53935"; ctx.fillRect(-8, -16, 18, 6); ctx.fillStyle = "#ffcc80"; ctx.beginPath(); ctx.arc(1, -26, 7, 0, 7); ctx.fill();   // rider
+        ctx.restore();
+        if (a.S.t < 2.5) { ctx.fillStyle = "#5d4037"; ctx.font = "700 17px system-ui"; ctx.textAlign = "center"; ctx.fillText("Tap to jump!", a.w / 2, 120); }
+      },
+    };
+  });
+
+  /* ------------------------------ PANI PURI RUSH ------------------------------ */
+  games.panipuri = mk("panipuri", "🥟 Pani Puri Rush", 340, 470, (a) => {
+    const FL = [{ n: "Mint", c: "#43a047", e: "🌿" }, { n: "Tamarind", c: "#8d5524", e: "🍯" }, { n: "Spicy", c: "#e53935", e: "🌶️" }];
+    let cust = [], lives = 3, served = 0, spawn = 0.4, flash = 0, combo = 0;
+    const slotX = (i) => 52 + i * 78;
+    const serve = (f) => {
+      if (!cust.length) return; const c = cust[0];
+      if (c.want === f) { served++; combo++; a.sfx(combo > 2 ? "win" : "good"); a.burst(slotX(c.slot), 140, FL[f].c, 14, 110); cust.shift(); flash = 0; }
+      else { lives--; combo = 0; a.sfx("bad"); a.shake(8); flash = 0.3; if (lives <= 0) a.finish(served); }
+      a.hud(`🥟 ${served}   ❤️ ${lives}${combo > 2 ? "   🔥x" + combo : ""}`);
+    };
+    return {
+      down(x, y) { if (y > a.h - 120) { const i = Math.floor(x / (a.w / 3)); serve(Math.max(0, Math.min(2, i))); } },
+      key(k) { if (k === "1" || k === "2" || k === "3") serve(+k - 1); },
+      update(dt) {
+        flash = Math.max(0, flash - dt); spawn -= dt;
+        if (spawn <= 0 && cust.length < 4) { spawn = Math.max(0.8, 2.2 - a.S.t * 0.03); const used = cust.map((c) => c.slot); const slot = [0, 1, 2, 3].find((s) => !used.includes(s)); cust.push({ slot, want: Math.floor(rnd(0, 3)), pat: 1, rate: Math.min(0.5, 0.17 + a.S.t * 0.004), e: ["🧑", "👩", "👴", "👧", "🧔"][Math.floor(rnd(0, 5))] }); }
+        cust.forEach((c) => { c.pat -= dt * c.rate; });
+        if (cust.length && cust[0].pat <= 0) { cust.shift(); lives--; combo = 0; a.sfx("miss"); a.shake(6); a.hud(`🥟 ${served}   ❤️ ${lives}`); if (lives <= 0) a.finish(served); }
+        else for (let i = cust.length - 1; i > 0; i--) if (cust[i].pat <= 0) { cust.splice(i, 1); lives--; a.sfx("miss"); a.hud(`🥟 ${served}   ❤️ ${lives}`); if (lives <= 0) a.finish(served); }
+      },
+      draw(ctx) {
+        sky(ctx, a.w, a.h, "#ff8f00", "#ffe082"); ctx.fillStyle = "#6d4c41"; ctx.fillRect(0, 175, a.w, 20); ctx.fillStyle = "#8d6e63"; ctx.fillRect(0, 195, a.w, a.h);
+        ctx.fillStyle = "#c62828"; ctx.beginPath(); ctx.moveTo(0, 20); for (let i = 0; i <= 8; i++) ctx.lineTo(i * 42.5, 20 + (i % 2) * 14); ctx.lineTo(a.w, 0); ctx.lineTo(0, 0); ctx.fill();
+        cust.forEach((c, i) => {
+          const x = slotX(c.slot); ctx.font = "44px system-ui"; ctx.textAlign = "center"; ctx.fillText(c.e, x, 150);
+          ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.roundRect(x - 28, 52, 56, 34, 10); ctx.fill(); ctx.font = "22px system-ui"; ctx.fillStyle = "#000"; ctx.fillText(FL[c.want].e, x, 77);
+          ctx.fillStyle = "#0005"; ctx.fillRect(x - 26, 160, 52, 6); ctx.fillStyle = c.pat > 0.5 ? "#66bb6a" : c.pat > 0.25 ? "#ffa726" : "#ef5350"; ctx.fillRect(x - 26, 160, 52 * Math.max(0, c.pat), 6);
+          if (i === 0) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 3; ctx.strokeRect(x - 33, 47, 66, 44); }
+        });
+        FL.forEach((f, i) => { const x = i * (a.w / 3) + a.w / 6; ctx.fillStyle = f.c; ctx.beginPath(); ctx.roundRect(x - 48, a.h - 105, 96, 90, 18); ctx.fill(); ctx.fillStyle = "#fff"; ctx.font = "34px system-ui"; ctx.textAlign = "center"; ctx.fillText(f.e, x, a.h - 60); ctx.font = "700 14px system-ui"; ctx.fillText(f.n, x, a.h - 30); });
+        ctx.font = "13px system-ui"; ctx.fillStyle = "#4e342e"; ctx.textAlign = "center"; ctx.fillText("Serve the FIRST customer (white frame) the pani they ask for", a.w / 2, 215);
+        if (flash > 0) { ctx.fillStyle = `rgba(255,0,0,${flash})`; ctx.fillRect(0, 0, a.w, a.h); }
+      },
+    };
+  });
+
+  /* -------------------------------- MEMO FLIP -------------------------------- */
+  games.memoflip = mk("memoflip", "🧠 Memo Flip", 340, 440, (a) => {
+    const EM = ["🍎", "🚀", "🐱", "⚽", "🎸", "🍕", "🌈", "👑"]; const deck = [...EM, ...EM].sort(() => Math.random() - 0.5).map((e, i) => ({ e, i, up: 0, done: false }));
+    let first = null, lock = 0, time = 60, pairs = 0, moves = 0;
+    const pos = (i) => [20 + (i % 4) * 78, 70 + Math.floor(i / 4) * 85];
+    return {
+      down(x, y) {
+        if (lock > 0 || a.S.over) return;
+        const i = deck.findIndex((c, k) => { const [cx, cy] = pos(k); return x > cx && x < cx + 68 && y > cy && y < cy + 76; });
+        if (i < 0 || deck[i].up || deck[i].done) return;
+        deck[i].up = 1; a.sfx("flip");
+        if (first === null) first = i;
+        else {
+          moves++; const A1 = deck[first], B = deck[i];
+          if (A1.e === B.e) { A1.done = B.done = true; pairs++; first = null; setTimeout(() => { a.sfx("good"); const p1 = pos(A1.i), p2 = pos(B.i); a.burst(p1[0] + 34, p1[1] + 38, "#ffd24a", 10); a.burst(p2[0] + 34, p2[1] + 38, "#ffd24a", 10); }, 250); if (pairs === 8) { a.sfx("win"); a.finish(pairs * 10 + Math.ceil(time)); } }
+          else { lock = 0.7; const f = first; first = null; setTimeout(() => { deck[f].up = 0; deck[i].up = 0; a.sfx("miss"); }, 650); }
+        }
+      },
+      update(dt) { lock = Math.max(0, lock - dt); time -= dt; if (time <= 0) { a.finish(pairs * 10); } a.hud(`🧠 ${pairs}/8   ⏱ ${Math.max(0, Math.ceil(time))}`); },
+      draw(ctx) {
+        sky(ctx, a.w, a.h, "#311b92", "#5e35b1");
+        deck.forEach((c, k) => {
+          const [x, y] = pos(k); c.s = (c.s === undefined ? c.up : c.s) + (c.up - (c.s === undefined ? c.up : c.s)) * 0.25; const sx = Math.abs(Math.cos(c.s * Math.PI)); const face = c.s > 0.5;
+          ctx.save(); ctx.translate(x + 34, y + 38); ctx.scale(Math.max(0.04, sx), 1);
+          ctx.fillStyle = c.done ? "#66bb6a" : face ? "#fff" : "#7e57c2"; ctx.beginPath(); ctx.roundRect(-34, -38, 68, 76, 10); ctx.fill();
+          if (!face) { ctx.fillStyle = "#b39ddb"; ctx.font = "800 28px system-ui"; ctx.textAlign = "center"; ctx.fillText("?", 0, 10); } else { ctx.font = "34px system-ui"; ctx.textAlign = "center"; ctx.fillText(c.e, 0, 12); }
+          ctx.restore();
+        });
+      },
+    };
+  });
+})();

@@ -183,6 +183,10 @@
     { k: "stack", e: "🏗️", t: "Stack Tower", d: "Drop blocks, build high" },
     { k: "roadrush", e: "🏎️", t: "Road Rush", d: "Dodge traffic, grab coins" },
     { k: "mole", e: "🔨", t: "Whack-a-Mole", d: "Whack moles, avoid bombs" },
+    { k: "cricketblitz", e: "🏏", t: "Cricket Blitz", d: "Time your shot: hit sixes!" },
+    { k: "ponyrush", e: "🐎", t: "Pony Rush", d: "Jump fences, collect coins" },
+    { k: "panipuri", e: "🥟", t: "Pani Puri Rush", d: "Serve the right pani fast" },
+    { k: "memoflip", e: "🧠", t: "Memo Flip", d: "Match all pairs in 60s" },
   ];
   HUB.openArcade = function () {
     const o = overlay("🕹 Arcade", `<p class="xnote">Solo games that pay coins (daily cap applies). Anti-cheat runs on the server.</p>
