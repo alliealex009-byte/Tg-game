@@ -166,3 +166,11 @@ For a quick look in a browser without Telegram, set `DEV_MODE=1` and open `https
 | "Session expired, reopen the app" | Close and reopen the mini app |
 | Bot ignores `/play@Bot` in a group | 1) `docker compose logs -f bot` then send the command: you should see `group command '/play@...'`. Nothing logged = Telegram is not delivering (the bot isn't in that group, or **a second copy of the bot with the same token is running** and stealing updates - stop every other deployment/Termux/Railway instance). 2) Send `/ping@Bot` - it answers with chat type and the bot's role. 3) Make sure you deployed the latest zip and restarted (`docker compose up -d --build`). |
 | Join button does nothing in a group | Set `APP_SHORT_NAME`, or users must have started the bot once |
+
+## v4.0
+- 4 new original arcade games inspired by classic browser doodles (Cricket Blitz, Pony Rush, Pani Puri Rush, Memo Flip) - own art/code, nothing copied from Google.
+- Betting duels: Coin Flip Duel (`/playflip 100`) and Dice Duel (`/playdice 100`), server-side flips/rolls.
+- Per-game cover images (`assets/covers/<key>.png`, regenerate with `python3 tools/make_covers.py`) and per-game commands for every arcade game (`/snake`, `/memoflip`, ...), DM and group.
+- Group status line: when someone starts an arcade game from a group, the bot posts "X is playing <game>..." and edits it to the score afterwards (Bot API has no real "playing" chat action).
+- Owner coin commands: `/give id|@user amount` (or reply), `/giveall amount`, `/givegroup amount` (members the bot has seen in that group).
+- Credits (owner AAKASH, sister bot @Groupingabot, "add me to your group") in arcade/game cover captions.
