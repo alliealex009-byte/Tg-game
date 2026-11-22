@@ -36,7 +36,7 @@ import importlib  # noqa: E402
 import os  # noqa: E402
 
 _WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "webapp")
-for _grp in ("boards", "cards", "dice", "party", "action", "arena", "arena2"):
+for _grp in ("boards", "cards", "dice", "party", "action", "arena", "arena2", "arena3"):
     # a group is only offered once its mini-app renderer exists (stub files are < 500 bytes)
     _js = os.path.join(_WEB, f"g_{_grp}.js")
     if not os.path.exists(_js) or os.path.getsize(_js) < 500:
@@ -58,7 +58,7 @@ for _k in ("ludo", "snakes", "carrom", "connect4", "tictactoe", "rps", "memory")
 # tests) but is hidden from menus unless SHOW_ALL_GAMES=1.
 FEATURED = [
     "ludo", "uno", "carrom", "chess", "snakes", "checkers", "connect4", "tictactoe", "dominoes", "battleship",
-    "dots", "hangman", "bingo", "teenpatti", "mafia", "scribble", "trivia", "tank", "race", "memory", "crazy8",
+    "dots", "hangman", "bingo", "teenpatti", "mafia", "scribble", "trivia", "tank", "race", "memory", "crazy8", "cricket", "bluff",
 ]
 LISTED = (
     dict(GAME_INFO)
