@@ -71,6 +71,12 @@ HOWTO = {
 
 ARCADE_TIPS = {
     "bricks": "Drag to move the paddle, break every brick. Missing the ball loses a life.",
+    "snake": "Swipe to steer the snake, eat apples, don't hit the walls or yourself. It speeds up!",
+    "flap": "Tap to flap and fly through the gaps. Every pipe is a point.",
+    "galaxy": "Drag your ship, it fires automatically. Shoot the aliens, dodge the crashes. 3 lives.",
+    "stack": "Tap to drop the sliding block. Only the overlap stays, a perfect drop keeps the full width!",
+    "roadrush": "Tap the left or right side to change lane. Dodge the cars, grab coins for bonus distance.",
+    "mole": "Whack the moles for +1. Don't hit the bombs (-3)! 30 seconds.",
     "tapverse": "Tap the coin to earn. Energy refills over time; upgrade your tap power.",
     "quickdrop": "Catch coins, dodge bombs. 30 seconds.",
     "gridpop": "Tap groups of 2+ same-coloured tiles to pop them. Bigger groups score more.",

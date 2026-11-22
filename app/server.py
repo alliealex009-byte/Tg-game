@@ -263,7 +263,19 @@ async def arcade_start(request: Request):
 @app.post("/api/arcade/claim")
 async def arcade_claim(request: Request):
     u, d = auth_user(request), await body(request)
-    return arc_call(arcade.claim, u["id"], d.get("game"), d.get("score"))
+    res = arc_call(arcade.claim, u["id"], d.get("game"), d.get("score"))
+    gid = d.get("gid")
+    if isinstance(gid, int) and not isinstance(gid, bool) and gid < 0:       # played from a group: count it on that group's board
+        try:
+            bot = app.state.bot
+            if bot is not None:
+                mem = await asyncio.wait_for(bot.get_chat_member(gid, u["id"]), 4)
+                if mem.status not in ("left", "kicked"):
+                    db.arc_group_score(gid, u["id"], d.get("game"), res["score"])
+                    res["group"] = True
+        except Exception:
+            pass
+    return res
 
 
 @app.post("/api/tap")

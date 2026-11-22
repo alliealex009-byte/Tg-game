@@ -74,6 +74,7 @@ class DB:
         self.c.executescript(
             "CREATE TABLE IF NOT EXISTS chats(id INTEGER PRIMARY KEY, title TEXT, type TEXT, active INTEGER NOT NULL DEFAULT 1, added REAL NOT NULL);"
             "CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);"
+            "CREATE TABLE IF NOT EXISTS arc_group(chat_id INTEGER NOT NULL, uid INTEGER NOT NULL, game TEXT NOT NULL, best INTEGER NOT NULL DEFAULT 0, plays INTEGER NOT NULL DEFAULT 0, ts REAL NOT NULL DEFAULT 0, PRIMARY KEY(chat_id, uid, game));"
         )
 
     # ---------- bot admin helpers ----------
@@ -108,6 +109,29 @@ class DB:
             "ON CONFLICT(id) DO UPDATE SET title=excluded.title, type=excluded.type, active=excluded.active",
             (cid, title, ctype, 1 if active else 0, time.time()),
         )
+
+    def arc_group_score(self, chat_id: int, uid: int, game: str, score: int):
+        """Remember a player's best score for a game inside one group (powers the group arcade board)."""
+        self.c.execute(
+            "INSERT INTO arc_group(chat_id,uid,game,best,plays,ts) VALUES(?,?,?,?,1,?) "
+            "ON CONFLICT(chat_id,uid,game) DO UPDATE SET best=MAX(best,excluded.best), plays=plays+1, ts=excluded.ts",
+            (chat_id, uid, game, int(score), time.time()),
+        )
+
+    def arc_group_top(self, chat_id: int, limit: int = 10):
+        rows = self.c.execute(
+            "SELECT g.uid, u.name, SUM(g.best) AS pts, COUNT(*) AS games, SUM(g.plays) AS plays FROM arc_group g "
+            "JOIN users u ON u.id=g.uid WHERE g.chat_id=? GROUP BY g.uid ORDER BY pts DESC LIMIT ?",
+            (chat_id, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def arc_group_game_top(self, chat_id: int, game: str, limit: int = 3):
+        rows = self.c.execute(
+            "SELECT u.name, g.best FROM arc_group g JOIN users u ON u.id=g.uid WHERE g.chat_id=? AND g.game=? ORDER BY g.best DESC LIMIT ?",
+            (chat_id, game, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def chat_ids(self):
         return [r["id"] for r in self.c.execute("SELECT id FROM chats WHERE active=1")]

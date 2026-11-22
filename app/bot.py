@@ -47,7 +47,8 @@ def players_txt(i) -> str:
 
 
 COMMANDS = (
-    [BotCommand(command="start", description="Open the game hub"), BotCommand(command="games", description="List all games")]
+    [BotCommand(command="start", description="Open the game hub"), BotCommand(command="games", description="List all games"),
+     BotCommand(command="arcade", description="🕹 Arcade games - earn coins")]
     + [BotCommand(command=i["cmd"], description=f"{i['emoji']} {i['title']} [bet]"[:100]) for i in LISTED.values()]
     + [
         BotCommand(command="profile", description="Your stats"),
@@ -64,8 +65,10 @@ COMMANDS = (
 
 GROUP_COMMANDS = [
     BotCommand(command="play", description="🎮 Pick a game to play in this group"),
+    BotCommand(command="arcade", description="🕹 Arcade games - earn coins"),
     BotCommand(command="games", description="List all games"),
     BotCommand(command="rooms", description="Open game rooms in this group"),
+    BotCommand(command="arcadetop", description="🏆 This group's arcade ranking"),
     BotCommand(command="top", description="Leaderboard"),
     BotCommand(command="daily", description="Claim your daily bonus"),
     BotCommand(command="profile", description="Your stats"),
@@ -76,7 +79,33 @@ GROUP_COMMANDS = [
      for k in ("ludo", "uno", "carrom", "chess", "snakes", "tictactoe", "connect4", "teenpatti") if k in GAME_INFO]
 ADMIN_GROUP_COMMANDS = [BotCommand(command="verify", description="Join-request verification on/off (admins)")]
 
+ARCADE = [  # solo games that pay coins; also playable from groups (the group shares one leaderboard via /top)
+    ("bricks", "🧱", "Break Bricks"), ("tapverse", "🪙", "TapVerse"), ("quickdrop", "☄️", "QuickDrop"), ("gridpop", "🔷", "GridPop"),
+    ("pocketfarm", "🌱", "PocketFarm"), ("byteblock", "🟦", "ByteBlock"), ("tiledash", "⚡", "TileDash"), ("neonslice", "🍉", "NeonSlice"),
+    ("minttap", "🎯", "MintTap"), ("turbocoin", "🚀", "TurboCoin"), ("sprout", "🌳", "IdleSprout"), ("paws", "🐾", "PixelPaws"),
+    ("world", "🏘️", "TinyWorld"), ("realm", "🏰", "MiniRealm"),
+    ("snake", "🐍", "Snake"), ("flap", "🐤", "Flappy Wing"), ("galaxy", "🚀", "Galaxy Shooter"),
+    ("stack", "🏗️", "Stack Tower"), ("roadrush", "🏎️", "Road Rush"), ("mole", "🔨", "Whack-a-Mole"),
+]
+ARCADE_KEYS = {k for k, _, _ in ARCADE}
+GROUP_COMMANDS_EXTRA = [BotCommand(command="arcade", description="🕹 Arcade games - earn coins")]
+
 ADD_RIGHTS = "delete_messages+invite_users+pin_messages+restrict_members"
+
+
+def parse_arc(arg: str):
+    """'snake' or 'snake_n1001234567890' (group chat id -1001234567890) -> (key, gid | None)"""
+    key, _, g = arg.partition("_")
+    gid = None
+    if g.startswith("n") and g[1:].isdigit():
+        gid = -int(g[1:])
+    return key, gid
+
+
+def ctype(chat) -> str:
+    """Chat.type is a plain str in aiogram 3 (not an Enum), so never use .value on it."""
+    t = getattr(chat, "type", "")
+    return str(getattr(t, "value", t))
 
 
 def games_list(cat: str | None = None) -> str:
@@ -114,7 +143,7 @@ class Gate(BaseMiddleware):
                 return None
             chat = event.chat if isinstance(event, Message) else (event.message.chat if isinstance(event, CallbackQuery) and event.message else None)
             if chat is not None and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
-                self.db.upsert_chat(chat.id, chat.title or "", chat.type.value)
+                self.db.upsert_chat(chat.id, chat.title or "", ctype(chat))
         return await handler(event, data)
 
 
@@ -140,7 +169,7 @@ def build(settings, db, rooms):
             txt = getattr(event, "text", None) or ""
             chat = getattr(event, "chat", None)
             if txt.startswith("/") and chat is not None and chat.type != ChatType.PRIVATE:
-                log.info("group command %r in %s (%s) from %s", txt.split()[0], chat.id, chat.type.value, getattr(event.from_user, "id", None))
+                log.info("group command %r in %s (%s) from %s", txt.split()[0], chat.id, ctype(chat), getattr(event.from_user, "id", None))
             return await handler(event, data)
 
     r.message.outer_middleware(Trace())
@@ -259,6 +288,13 @@ def build(settings, db, rooms):
                 f"{info['emoji']} <b>{info['title']}</b> room <code>{code}</code>\nTap below to join!",
                 reply_markup=Kb(inline_keyboard=[[Btn(text="🎮 Join game", web_app=WebAppInfo(url=f"{settings.webapp_url}?room={code}"))]]),
             )
+        if arg.startswith("arc_"):
+            k, gid = parse_arc(arg[4:])
+            if k in ARCADE_KEYS:
+                t = next(x for x in ARCADE if x[0] == k)
+                extra = f"&g={gid}" if gid else ""
+                return await m.answer(f"{t[1]} <b>{t[2]}</b>\nTap below to play and earn coins!" + ("\n🏆 Your score counts on the group board." if gid else ""),
+                                      reply_markup=Kb(inline_keyboard=[[Btn(text=f"▶️ Play {t[2]}", web_app=WebAppInfo(url=f"{settings.webapp_url}?arcade={k}{extra}"))]]))
         if arg.startswith("ref_") and arg[4:].isdigit():
             ref = int(arg[4:])
             if db.set_referrer(m.from_user.id, ref, settings.referral_bonus):
@@ -454,6 +490,7 @@ def build(settings, db, rooms):
                 rows.append(row); row = []
         if row:
             rows.append(row)
+        rows.append([Btn(text="🕹 Arcade games", callback_data="gp_arc")])
         rows.append([Btn(text="➕ Add me to another group", url=addgroup_url())])
         await m.answer(
             "🎮 <b>Pick a game for this group</b>\nTap one and I will open a lobby everybody can join.\n"
@@ -485,6 +522,45 @@ def build(settings, db, rooms):
         )
         note_room(cb.message.chat.id, room.code)
 
+    def arcade_kb(private: bool, chat_id=None):
+        rows, row = [], []
+        suffix = "" if private or chat_id is None else f"_n{abs(chat_id)}"
+        for k, e, t in ARCADE:
+            if private:
+                b = Btn(text=f"{e} {t}", web_app=WebAppInfo(url=f"{settings.webapp_url}?arcade={k}"))
+            elif ctx["app_ok"] and ctx["app_short"]:
+                b = Btn(text=f"{e} {t}", url=f"https://t.me/{ctx['username']}/{ctx['app_short']}?startapp=arc_{k}{suffix}")
+            else:
+                b = Btn(text=f"{e} {t}", url=f"https://t.me/{ctx['username']}?start=arc_{k}{suffix}")
+            row.append(b)
+            if len(row) == 2:
+                rows.append(row); row = []
+        if row:
+            rows.append(row)
+        return Kb(inline_keyboard=rows)
+
+    @r.message(Command("arcade"))
+    async def arcade_cmd(m: Message):
+        await m.answer("🕹 <b>Arcade</b> - solo games that pay coins. Everyone in the group can play; compare scores with /top",
+                       reply_markup=arcade_kb(m.chat.type == ChatType.PRIVATE, m.chat.id))
+
+    @r.callback_query(F.data == "gp_arc")
+    async def cb_group_arcade(cb: CallbackQuery):
+        await cb.answer()
+        if cb.message is not None:
+            await cb.message.answer("🕹 <b>Arcade</b> - pick a game, it opens in the bot:", reply_markup=arcade_kb(cb.message.chat.type == ChatType.PRIVATE, cb.message.chat.id))
+
+    @r.message(Command("arcadetop", "grouptop"))
+    async def arcade_top(m: Message):
+        if m.chat.type == ChatType.PRIVATE:
+            return await m.reply("Use /arcadetop inside a group to see that group's arcade ranking. Global ranking: /top")
+        rows = db.arc_group_top(m.chat.id, 10)
+        if not rows:
+            return await m.reply("🏆 No arcade scores in this group yet. Start with /arcade!")
+        medals = ["🥇", "🥈", "🥉"]
+        lines = [f"{medals[i] if i < 3 else f'{i + 1}.'} <b>{esc(r['name'])}</b> - {r['pts']} pts · {r['games']} games" for i, r in enumerate(rows)]
+        await m.reply("🏆 <b>Group Arcade Ranking</b>\n" + "\n".join(lines) + "\n\n<i>Points = sum of each player's best score per game.</i>")
+
     @r.message(Command("rooms"))
     async def rooms_cmd(m: Message):
         private = m.chat.type == ChatType.PRIVATE
@@ -500,7 +576,7 @@ def build(settings, db, rooms):
 
     @r.message(Command("ping"))
     async def ping(m: Message):
-        lines = [f"🏓 Pong! I can read this chat.", f"Chat type: <code>{m.chat.type.value}</code>", f"Chat id: <code>{m.chat.id}</code>"]
+        lines = [f"🏓 Pong! I can read this chat.", f"Chat type: <code>{ctype(m.chat)}</code>", f"Chat id: <code>{m.chat.id}</code>"]
         if m.chat.type != ChatType.PRIVATE:
             try:
                 me_member = await bot.get_chat_member(m.chat.id, bot.id)
@@ -531,7 +607,7 @@ def build(settings, db, rooms):
             db.mark_dm(ev.from_user.id, st not in ("kicked", "left"))
             return
         if st in ("member", "administrator"):
-            db.upsert_chat(chat.id, chat.title or "", chat.type.value)
+            db.upsert_chat(chat.id, chat.title or "", ctype(chat))
             if chat.type == ChatType.CHANNEL or ev.old_chat_member.status in ("member", "administrator"):
                 return  # promotion / demotion, not a fresh add
             who = esc(ev.from_user.full_name) if ev.from_user else "everyone"
