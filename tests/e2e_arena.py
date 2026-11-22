@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import e2e_shots as E  # noqa: E402
 from playwright.async_api import async_playwright  # noqa: E402
 
-GAMES = {"tank": 1, "race": 1, "dominoes": 1, "wordle": 1, "quest": 1, "clickrush": 1, "partydrop": 1, "chatclash": 1, "pingplay": 1, "coinpulse": 1, "squadduel": 1, "telearena": 1, "poker": 1, "yahtzee": 1, "simon": 1, "mathblitz": 1, "wyr": 1, "guessnum": 1, "emojiquiz": 1, "penalty": 1, "scribble": 1, "cricket": 1, "bluff": 2}
+GAMES = {"tank": 1, "race": 1, "dominoes": 1, "wordle": 1, "quest": 1, "clickrush": 1, "partydrop": 1, "chatclash": 1, "pingplay": 1, "coinpulse": 1, "squadduel": 1, "telearena": 1, "poker": 1, "yahtzee": 1, "simon": 1, "mathblitz": 1, "wyr": 1, "guessnum": 1, "emojiquiz": 1, "penalty": 1, "scribble": 1, "cricket": 1, "bluff": 2, "coinduel": 1, "diceduel": 1}
 import os
 if os.environ.get("ONLY"):
     GAMES = {k: v for k, v in GAMES.items() if k in os.environ["ONLY"].split(",")}

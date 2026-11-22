@@ -26,7 +26,7 @@ async def main():
             await page.click("#h-arcade")
             await page.wait_for_selector(".xitem")
             n = await page.evaluate("document.querySelectorAll('.xitem').length")
-            if n != 14:
+            if n != 24:
                 fails.append(f"arcade items {n}")
             for k, sel in (("byteblock", "#bb"), ("tiledash", "#td"), ("neonslice", "#xc"), ("minttap", "#mtgo"), ("turbocoin", "#tcb")):
                 await page.click(f"[data-k='{k}']")

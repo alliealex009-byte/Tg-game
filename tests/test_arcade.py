@@ -13,7 +13,7 @@ class ArcadeTests(unittest.TestCase):
 
     def test_new_games_capped(self):
         from app.arcade import GAMES
-        for g in ("byteblock", "tiledash", "neonslice", "minttap", "turbocoin"):
+        for g in ("byteblock", "tiledash", "neonslice", "minttap", "turbocoin", "snake", "flap", "galaxy", "stack", "roadrush", "mole", "cricketblitz", "ponyrush", "panipuri", "memoflip"):
             self.assertIn(g, GAMES)
             self.a.start(1, g)
             with self.assertRaises(ValueError):
@@ -22,6 +22,15 @@ class ArcadeTests(unittest.TestCase):
             self.t[0] += 60
             r = self.a.claim(1, g, 10**9)           # hacked score is clamped
             self.assertLessEqual(r["coins"], GAMES[g][3])
+
+    def test_group_board(self):
+        self.db.arc_group_score(-9, 1, "snake", 10)
+        self.db.arc_group_score(-9, 1, "snake", 4)          # lower score never replaces the best
+        self.db.arc_group_score(-9, 1, "flap", 3)
+        top = self.db.arc_group_top(-9)
+        self.assertEqual(top[0]["pts"], 13)
+        self.assertEqual(top[0]["plays"], 3)
+        self.assertEqual(self.db.arc_group_top(-10), [])
 
     def test_claim_needs_run_and_time(self):
         with self.assertRaises(ValueError):

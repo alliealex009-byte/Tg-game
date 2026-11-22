@@ -49,7 +49,7 @@ def install_stubs():
         m = types.ModuleType(name); m.__dict__.update(attrs); sys.modules[name] = m; return m
 
     class CT(str):
-        value = property(lambda self: str(self))
+        pass   # real aiogram: Chat.type is a plain str, there is no .value
     mod("aiogram", Bot=Bot, BaseMiddleware=object, Dispatcher=Dispatcher, F=FMeta(), Router=Router)
     mod("aiogram.client"); mod("aiogram.client.default", DefaultBotProperties=Simple)
     mod("aiogram.enums", ChatType=NS(PRIVATE=CT("private"), GROUP=CT("group"), SUPERGROUP=CT("supergroup"), CHANNEL=CT("channel")),
@@ -247,6 +247,92 @@ class BotHandlerTests(unittest.TestCase):
         self.run_(self.h["cb_play"](c))
         b = self.bot.send_message.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
         self.assertIn("t.me/TestBot/play?startapp=", b.url)
+
+    def test_gate_middleware_in_group(self):
+        """Regression: Gate used chat.type.value, which crashes in groups (type is a plain str)."""
+        gate = botmod.Gate(self.db, lambda u: {"id": u.id})
+        m = self._group_msg()
+        m.__class__ = botmod.Message if isinstance(botmod.Message, type) else m.__class__
+        called = []
+
+        async def handler(ev, data):
+            called.append(1)
+        self.run_(gate(handler, m, {}))
+        self.assertEqual(called, [1])
+
+    def test_arcade_in_group_and_deeplink(self):
+        g = self._group_msg()
+        self.run_(self.h["arcade_cmd"](g))
+        kb = g.answer.call_args.kwargs["reply_markup"].inline_keyboard
+        urls = [b.url for row in kb for b in row]
+        self.assertEqual(len(urls), 24)
+        self.assertTrue(all("start=arc_" in u for u in urls))            # groups can't open web_app buttons
+        m = msg(2)
+        self.run_(self.h["start"](m, NS(args="arc_bricks")))
+        b = self.bot.send_photo.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+        self.assertIn("?arcade=bricks", b.web_app.url)
+        self.assertIn("Groupingabot", self.bot.send_photo.call_args.kwargs["caption"])
+        p = msg(2)
+        self.run_(self.h["arcade_cmd"](p))
+        b = p.answer.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+        self.assertIsNotNone(b.web_app)
+
+    def test_per_game_command_and_cover(self):
+        import os
+        for k, _, _ in botmod.ARCADE:
+            self.assertTrue(os.path.exists(os.path.join(botmod.COVERS, k + ".png")), k)
+        m = msg(2, "/snake")
+        self.run_(self.h["arcade_one"](m, NS(command="snake")))
+        kb = self.bot.send_photo.call_args.kwargs["reply_markup"].inline_keyboard
+        self.assertIn("?arcade=snake", kb[0][0].web_app.url)
+        g = self._group_msg()
+        self.run_(self.h["arcade_one"](g, NS(command="memoflip")))
+        kb = self.bot.send_photo.call_args.kwargs["reply_markup"].inline_keyboard
+        self.assertTrue(kb[0][0].url.endswith("arc_memoflip_n55"))
+        self.assertIn("AAKASH", self.bot.send_photo.call_args.kwargs["caption"])
+
+    def test_owner_give_commands(self):
+        before = self.db.get_user(2)["coins"]
+        self.run_(self.h["give"](msg(2, "/give"), NS(args="2 500")))                 # non-owner: ignored
+        self.assertEqual(self.db.get_user(2)["coins"], before)
+        m = msg(1, "/give")
+        self.run_(self.h["give"](m, NS(args="@u2 500")))
+        self.assertEqual(self.db.get_user(2)["coins"], before + 500)
+        r = msg(1, "/give")
+        r.reply_to_message = NS(from_user=NS(id=3))
+        self.run_(self.h["give"](r, NS(args="50")))
+        self.assertEqual(self.db.get_user(3)["coins"], 1050)
+        b3 = self.db.get_user(3)["coins"]
+        self.run_(self.h["giveall"](msg(1, "/giveall"), NS(args="10")))
+        self.assertEqual(self.db.get_user(3)["coins"], b3 + 10)
+        grp = sys.modules["aiogram.enums"].ChatType.SUPERGROUP
+        self.db.chat_user_add(-100, 2)
+        b2, b3 = self.db.get_user(2)["coins"], self.db.get_user(3)["coins"]
+        self.run_(self.h["givegroup"](msg(1, "/givegroup", chat=grp, cid=-100), NS(args="25")))
+        self.assertEqual(self.db.get_user(2)["coins"], b2 + 25)
+        self.assertEqual(self.db.get_user(3)["coins"], b3)                           # not in that group
+
+    def test_group_arcade_board(self):
+        self.assertEqual(botmod.parse_arc("snake_n1001234"), ("snake", -1001234))
+        self.assertEqual(botmod.parse_arc("snake"), ("snake", None))
+        g = self._group_msg()
+        self.run_(self.h["arcade_cmd"](g))
+        urls = [b.url for row in g.answer.call_args.kwargs["reply_markup"].inline_keyboard for b in row]
+        self.assertTrue(all(u.endswith("_n55") for u in urls))           # the group id rides along in the link
+        self.assertEqual(len(urls), 24)
+        e = self._group_msg()
+        self.run_(self.h["arcade_top"](e))
+        self.assertIn("No arcade scores", e.reply.call_args.args[0])
+        self.db.arc_group_score(-55, 1, "snake", 12); self.db.arc_group_score(-55, 1, "snake", 9)
+        self.db.arc_group_score(-55, 2, "flap", 5); self.db.arc_group_score(-55, 1, "flap", 3)
+        e = self._group_msg()
+        self.run_(self.h["arcade_top"](e))
+        txt = e.reply.call_args.args[0]
+        self.assertIn("Group Arcade Ranking", txt)
+        self.assertLess(txt.index("U1") if "U1" in txt else txt.index("u1"), txt.index("u2") if "u2" in txt else 10**6)
+        m = msg(2)
+        self.run_(self.h["start"](m, NS(args="arc_snake_n55")))
+        self.assertIn("&g=-55", self.bot.send_photo.call_args.kwargs["reply_markup"].inline_keyboard[0][0].web_app.url)
 
     def test_ping_and_plain_link_fallback(self):
         m = msg(2)
