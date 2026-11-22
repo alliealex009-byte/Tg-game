@@ -73,6 +73,7 @@ class DB:
                 self.c.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
         self.c.executescript(
             "CREATE TABLE IF NOT EXISTS chats(id INTEGER PRIMARY KEY, title TEXT, type TEXT, active INTEGER NOT NULL DEFAULT 1, added REAL NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS chat_users(chat_id INTEGER NOT NULL, uid INTEGER NOT NULL, PRIMARY KEY(chat_id, uid));"
             "CREATE TABLE IF NOT EXISTS kv(k TEXT PRIMARY KEY, v TEXT);"
             "CREATE TABLE IF NOT EXISTS arc_group(chat_id INTEGER NOT NULL, uid INTEGER NOT NULL, game TEXT NOT NULL, best INTEGER NOT NULL DEFAULT 0, plays INTEGER NOT NULL DEFAULT 0, ts REAL NOT NULL DEFAULT 0, PRIMARY KEY(chat_id, uid, game));"
         )
@@ -132,6 +133,20 @@ class DB:
             (chat_id, game, limit),
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def chat_user_add(self, chat_id: int, uid: int):
+        self.c.execute("INSERT OR IGNORE INTO chat_users(chat_id,uid) VALUES(?,?)", (chat_id, uid))
+
+    def chat_user_ids(self, chat_id: int):
+        return [r["uid"] for r in self.c.execute("SELECT uid FROM chat_users WHERE chat_id=?", (chat_id,))]
+
+    def find_user(self, ref: str):
+        """Find a user by numeric id or @username."""
+        ref = ref.strip()
+        if ref.lstrip("-").isdigit():
+            return self.get_user(int(ref))
+        row = self.c.execute("SELECT id FROM users WHERE lower(username)=lower(?)", (ref.lstrip("@"),)).fetchone()
+        return self.get_user(row["id"]) if row else None
 
     def chat_ids(self):
         return [r["id"] for r in self.c.execute("SELECT id FROM chats WHERE active=1")]

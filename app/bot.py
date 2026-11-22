@@ -3,6 +3,7 @@ join-request verification, referrals. Game rules live in app/games, pure helpers
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html
 import logging
 import os
@@ -35,6 +36,7 @@ log = logging.getLogger("bot")
 PLAY_CMDS = {info["cmd"]: key for key, info in GAME_INFO.items()}  # e.g. {"playludo": "ludo", ...}
 CATS = ["Board", "Cards", "Party", "Casino", "Brain", "Action", "Classic"]
 CAT_EMOJI = {"Action": "💥", "Board": "♟", "Cards": "🃏", "Party": "🎭", "Casino": "🎰", "Brain": "🧠", "Classic": "🎲"}
+COVERS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "covers")
 BANNER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "banner.png")
 
 
@@ -86,6 +88,7 @@ ARCADE = [  # solo games that pay coins; also playable from groups (the group sh
     ("world", "🏘️", "TinyWorld"), ("realm", "🏰", "MiniRealm"),
     ("snake", "🐍", "Snake"), ("flap", "🐤", "Flappy Wing"), ("galaxy", "🚀", "Galaxy Shooter"),
     ("stack", "🏗️", "Stack Tower"), ("roadrush", "🏎️", "Road Rush"), ("mole", "🔨", "Whack-a-Mole"),
+    ("cricketblitz", "🏏", "Cricket Blitz"), ("ponyrush", "🐎", "Pony Rush"), ("panipuri", "🥟", "Pani Puri Rush"), ("memoflip", "🧠", "Memo Flip"),
 ]
 ARCADE_KEYS = {k for k, _, _ in ARCADE}
 GROUP_COMMANDS_EXTRA = [BotCommand(command="arcade", description="🕹 Arcade games - earn coins")]
@@ -144,6 +147,7 @@ class Gate(BaseMiddleware):
             chat = event.chat if isinstance(event, Message) else (event.message.chat if isinstance(event, CallbackQuery) and event.message else None)
             if chat is not None and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
                 self.db.upsert_chat(chat.id, chat.title or "", ctype(chat))
+                self.db.chat_user_add(chat.id, user.id)
         return await handler(event, data)
 
 
@@ -154,6 +158,7 @@ def build(settings, db, rooms):
     dp.include_router(r)
     ctx = {"username": "", "banner_id": None, "app_ok": False, "app_short": ""}
     verifier = Verifier()
+    covers_cache: dict = {}  # game key -> Telegram file_id of its cover image
     chat_rooms: dict = {}   # chat id -> recent room codes (for /rooms)
     pending_bc: dict = {}   # admin id -> {"target": str, "src": (chat_id, msg_id) | None}
     owner_tag = f"@{settings.owner_username}"
@@ -293,8 +298,8 @@ def build(settings, db, rooms):
             if k in ARCADE_KEYS:
                 t = next(x for x in ARCADE if x[0] == k)
                 extra = f"&g={gid}" if gid else ""
-                return await m.answer(f"{t[1]} <b>{t[2]}</b>\nTap below to play and earn coins!" + ("\n🏆 Your score counts on the group board." if gid else ""),
-                                      reply_markup=Kb(inline_keyboard=[[Btn(text=f"▶️ Play {t[2]}", web_app=WebAppInfo(url=f"{settings.webapp_url}?arcade={k}{extra}"))]]))
+                return await send_cover(m.chat.id, k, f"{t[1]} <b>{t[2]}</b>\nTap below to play and earn coins!" + ("\n🏆 Your score counts on the group board." if gid else "") + promo(),
+                                        Kb(inline_keyboard=[[Btn(text=f"▶️ Play {t[2]}", web_app=WebAppInfo(url=f"{settings.webapp_url}?arcade={k}{extra}"))]]))
         if arg.startswith("ref_") and arg[4:].isdigit():
             ref = int(arg[4:])
             if db.set_referrer(m.from_user.id, ref, settings.referral_bonus):
@@ -539,9 +544,51 @@ def build(settings, db, rooms):
             rows.append(row)
         return Kb(inline_keyboard=rows)
 
+    def promo() -> str:
+        return (f"\n\n👑 Owner: <b>{esc(settings.owner_name)}</b> ({owner_tag}) · 🤖 Sister bot: {sister_tag}\n"
+                "➕ Add me to your group: /addgroup")
+
+    async def send_cover(chat_id: int, key: str, caption: str, kb: Kb):
+        """Per-game cover image (assets/covers/<key>.png); falls back to plain text."""
+        path = os.path.join(COVERS, f"{key}.png")
+        try:
+            if not os.path.exists(path):
+                raise FileNotFoundError(path)
+            m = await bot.send_photo(chat_id, covers_cache.get(key) or FSInputFile(path), caption=caption[:1024], reply_markup=kb)
+            if m.photo:
+                covers_cache[key] = m.photo[-1].file_id
+            return m
+        except TelegramForbiddenError:
+            raise
+        except Exception:
+            log.exception("cover send failed for %s", key)
+            return await bot.send_message(chat_id, caption, reply_markup=kb)
+
+    def arcade_one_kb(k: str, title: str, private: bool, chat_id):
+        if private:
+            return Kb(inline_keyboard=[[Btn(text=f"▶️ Play {title}", web_app=WebAppInfo(url=f"{settings.webapp_url}?arcade={k}"))],
+                                       [Btn(text="🕹 More arcade games", callback_data="gp_arc")]])
+        sfx = f"_n{abs(chat_id)}"
+        if ctx["app_ok"] and ctx["app_short"]:
+            url = f"https://t.me/{ctx['username']}/{ctx['app_short']}?startapp=arc_{k}{sfx}"
+        else:
+            url = f"https://t.me/{ctx['username']}?start=arc_{k}{sfx}"
+        return Kb(inline_keyboard=[[Btn(text=f"▶️ Play {title}", url=url)], [Btn(text="🕹 More arcade games", callback_data="gp_arc")]])
+
+    @r.message(Command(*sorted(ARCADE_KEYS)))
+    async def arcade_one(m: Message, command: CommandObject):
+        k = command.command
+        t = next(x for x in ARCADE if x[0] == k)
+        private = m.chat.type == ChatType.PRIVATE
+        cap = (f"{t[1]} <b>{t[2]}</b>\nTap below to play and earn coins!"
+               + ("" if private else "\n🏆 Everyone in this group can play; scores count on /arcadetop.") + promo())
+        await send_cover(m.chat.id, k, cap, arcade_one_kb(k, t[2], private, m.chat.id))
+
     @r.message(Command("arcade"))
     async def arcade_cmd(m: Message):
-        await m.answer("🕹 <b>Arcade</b> - solo games that pay coins. Everyone in the group can play; compare scores with /top",
+        names = " ".join(f"/{k}" for k, _, _ in ARCADE)
+        await m.answer("🕹 <b>Arcade</b> - solo games that pay coins. Everyone in the group can play; compare scores with /top\n\n"
+                       f"Quick commands: {names}" + promo(),
                        reply_markup=arcade_kb(m.chat.type == ChatType.PRIVATE, m.chat.id))
 
     @r.callback_query(F.data == "gp_arc")
@@ -776,6 +823,8 @@ def build(settings, db, rooms):
             return await show(cb, (
                 "🛠 <b>Owner commands</b>\n\n"
                 "<code>/addcoins id amount</code> — give (or take with −) coins\n"
+                "<code>/give id|@user amount</code> — gift coins (reply works in groups)\n"
+                "<code>/giveall amount</code> — every user · <code>/givegroup amount</code> — this group's members\n"
                 "<code>/ban id</code> · <code>/unban id</code>\n"
                 "<code>/user id</code> — look a player up\n"
                 "<code>/broadcast users|groups|all</code> — then send the message\n"
@@ -882,6 +931,68 @@ def build(settings, db, rooms):
             return await m.reply("Usage: /addcoins <user_id> <amount>")
         new = db.add_coins(uid, amount, f"admin:{m.from_user.id}")
         await m.reply("Done. New balance: %s" % new if new is not None else "Failed (unknown user or negative balance)")
+
+    async def _give(uids, amount: int, by: int):
+        ok = 0
+        for u in uids:
+            if db.add_coins(u, amount, f"gift:{by}") is not None:
+                ok += 1
+                with contextlib.suppress(Exception):
+                    await bot.send_message(u, f"🎁 <b>{esc(settings.owner_name)}</b> sent you <b>{amount}</b> coins!")
+        return ok
+
+    @r.message(Command("give"))
+    async def give(m: Message, command: CommandObject):
+        """Owner: /give <id|@username> <amount>, or reply to someone's message with /give <amount>."""
+        if not is_admin(m.from_user.id):
+            return
+        parts = (command.args or "").split()
+        target = None
+        try:
+            if m.reply_to_message and m.reply_to_message.from_user and len(parts) == 1:
+                target, amount = db.get_user(m.reply_to_message.from_user.id), int(parts[0])
+            elif len(parts) == 2:
+                target, amount = db.find_user(parts[0]), int(parts[1])
+            else:
+                raise ValueError
+        except ValueError:
+            return await m.reply("Usage: <code>/give id|@username amount</code> (or reply to a user: <code>/give amount</code>)")
+        if target is None:
+            return await m.reply("Unknown user - they must have started the bot or played once.")
+        n = await _give([target["id"]], amount, m.from_user.id)
+        await m.reply(f"✅ Gave <b>{amount}</b> coins to {esc(target['name'])}." if n else "Failed (negative balance?).")
+
+    @r.message(Command("giveall"))
+    async def giveall(m: Message, command: CommandObject):
+        if not is_admin(m.from_user.id):
+            return
+        try:
+            amount = int((command.args or "").split()[0])
+        except (ValueError, IndexError):
+            return await m.reply("Usage: <code>/giveall amount</code> - every bot user")
+        n = await _give(db.user_ids(False), amount, m.from_user.id)
+        await m.reply(f"✅ Gave <b>{amount}</b> coins to <b>{n}</b> users.")
+
+    @r.message(Command("givegroup"))
+    async def givegroup(m: Message, command: CommandObject):
+        """Owner: in a group `/givegroup amount`; in DM `/givegroup chat_id amount`. Covers members the bot has seen there."""
+        if not is_admin(m.from_user.id):
+            return
+        parts = (command.args or "").split()
+        try:
+            if m.chat.type != ChatType.PRIVATE and len(parts) == 1:
+                cid, amount = m.chat.id, int(parts[0])
+            elif len(parts) == 2:
+                cid, amount = int(parts[0]), int(parts[1])
+            else:
+                raise ValueError
+        except ValueError:
+            return await m.reply("Usage: in a group <code>/givegroup amount</code>; in DM <code>/givegroup chat_id amount</code>")
+        uids = db.chat_user_ids(cid)
+        if not uids:
+            return await m.reply("I haven't seen any members of that group yet (they appear once they send a command or tap a button).")
+        n = await _give(uids, amount, m.from_user.id)
+        await m.reply(f"✅ Gave <b>{amount}</b> coins to <b>{n}</b> members of that group.")
 
     @r.message(Command("ban", "unban"))
     async def ban(m: Message, command: CommandObject):

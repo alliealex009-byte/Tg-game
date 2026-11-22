@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import json
 import logging
 import os
@@ -42,6 +43,8 @@ BETS = [0, 50, 100, 500, 1000]
 async def lifespan(app: FastAPI):
     app.state.bot_username = ""
     app.state.bot = None
+    app.state.arc_titles = {}
+    app.state.playing = {}   # (group id, uid) -> (status message id, started ts)
     tasks = [asyncio.create_task(rooms.janitor()), asyncio.create_task(rooms.host_watch())]
     mongo = None
     if settings.mongo_uri:
@@ -59,7 +62,9 @@ async def lifespan(app: FastAPI):
     bot = None
     if settings.bot_token:
         try:
-            from .bot import build, prepare
+            from .bot import ARCADE, build, prepare
+
+            app.state.arc_titles = {k: (e, t) for k, e, t in ARCADE}
 
             bot, dp, ctx = build(settings, db, rooms)
             await prepare(bot, settings, ctx)
@@ -257,7 +262,46 @@ def arc_call(fn, *a):
 async def arcade_start(request: Request):
     u, d = auth_user(request), await body(request)
     arc_call(arcade.start, u["id"], d.get("game"))
+    gid = d.get("gid")
+    if isinstance(gid, int) and not isinstance(gid, bool) and gid < 0 and app.state.bot is not None:
+        asyncio.create_task(announce_playing(gid, u, d.get("game")))
     return {"ok": True, "left": arcade.left_today(u["id"])}
+
+
+async def announce_playing(gid: int, u: dict, game):
+    """Group status line: 'X is playing <game>' (edited into 'X scored N' on claim). The Bot API has no
+    'playing a game' chat action, so a live status message is the closest visible signal."""
+    try:
+        bot = app.state.bot
+        mem = await asyncio.wait_for(bot.get_chat_member(gid, u["id"]), 4)
+        if mem.status in ("left", "kicked"):
+            return
+        e, t = app.state.arc_titles.get(game, ("🎮", str(game)))
+        key, now = (gid, u["id"]), time.time()
+        old = app.state.playing.get(key)
+        txt = f"{e} <b>{html.escape(u['name'])}</b> is playing <b>{html.escape(t)}</b>…"
+        if old and now - old[1] < 600:
+            with contextlib.suppress(Exception):
+                await bot.edit_message_text(txt, chat_id=gid, message_id=old[0])
+            app.state.playing[key] = (old[0], now, game)
+            return
+        m = await asyncio.wait_for(bot.send_message(gid, txt + "\n<i>Join in: /arcade</i>", disable_notification=True), 6)
+        app.state.playing[key] = (m.message_id, now, game)
+    except Exception:
+        log.debug("announce_playing failed", exc_info=True)
+
+
+async def announce_score(gid: int, u: dict, game, score: int):
+    try:
+        old = app.state.playing.get((gid, u["id"]))
+        if not old:
+            return
+        e, t = app.state.arc_titles.get(game, ("🎮", str(game)))
+        await app.state.bot.edit_message_text(
+            f"{e} <b>{html.escape(u['name'])}</b> scored <b>{score}</b> in <b>{html.escape(t)}</b> 🏁\n<i>Beat it: /arcade · ranking: /arcadetop</i>",
+            chat_id=gid, message_id=old[0])
+    except Exception:
+        log.debug("announce_score failed", exc_info=True)
 
 
 @app.post("/api/arcade/claim")
@@ -273,6 +317,7 @@ async def arcade_claim(request: Request):
                 if mem.status not in ("left", "kicked"):
                     db.arc_group_score(gid, u["id"], d.get("game"), res["score"])
                     res["group"] = True
+                    asyncio.create_task(announce_score(gid, u, d.get("game"), res["score"]))
         except Exception:
             pass
     return res
