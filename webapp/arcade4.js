@@ -246,7 +246,10 @@
       const game = setup(api);
       const pos = (ev) => { const r = c.getBoundingClientRect(), t = ev.touches ? ev.touches[0] : ev; return [t.clientX - r.left, t.clientY - r.top]; };
       c.addEventListener("pointerdown", (ev) => { const [x, y] = pos(ev); game.down && game.down(x, y); });
+      c.addEventListener("pointermove", (ev) => { const [x, y] = pos(ev); game.move && game.move(x, y); });
+      c.addEventListener("pointerup", (ev) => { const [x, y] = pos(ev); game.up && game.up(x, y); });
       c.addEventListener("touchmove", (ev) => ev.preventDefault(), { passive: false });
+      c.style.touchAction = "none";
       const onKey = (ev) => { if (!document.body.contains(c)) return removeEventListener("keydown", onKey); game.key && game.key(ev.key); };
       addEventListener("keydown", onKey);
       let last = performance.now();
@@ -263,6 +266,7 @@
       })(last);
     };
   };
+  A.mk = mk;   // shared harness for later arcade files
   const sky = (ctx, w, h, a, b) => { const gr = ctx.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, a); gr.addColorStop(1, b); ctx.fillStyle = gr; ctx.fillRect(0, 0, w, h); };
 
   /* ------------------------------ CRICKET BLITZ ------------------------------ */

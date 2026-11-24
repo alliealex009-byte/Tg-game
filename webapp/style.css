@@ -309,3 +309,15 @@ body.in-room .gstage,body.in-room .lobby{padding-bottom:64px}
 @keyframes xemo{from{opacity:0;transform:translateY(12px) scale(.3)}}
 .xe{animation:xwob .5s ease-in-out 3}@keyframes xwob{50%{transform:rotate(14deg) scale(1.15)}}
 @media (prefers-reduced-motion:reduce){#xtray,#xtray button,.xe{animation:none}}
+
+/* Arcade hero + grid */
+.arcHero{border-radius:20px;padding:14px 12px 12px;margin-bottom:12px;background:linear-gradient(120deg,#6a11cb,#2575fc,#ff2d95);background-size:200% 200%;animation:ahmove 8s ease infinite;box-shadow:0 8px 24px #6a11cb55}
+@keyframes ahmove{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+.ah-top{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}.ah-t{font-weight:900;font-size:22px;letter-spacing:2px}.ah-s{font-size:12px;opacity:.9}
+.ah-all{background:#fff;color:#4a1fb8;border:0;border-radius:999px;padding:8px 14px;font-weight:800}
+.ah-strip{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch}.ah-strip::-webkit-scrollbar{display:none}
+.ah-tile,.atile{position:relative;border:0;border-radius:16px;color:#fff;text-align:center;scroll-snap-align:start;box-shadow:0 4px 12px #0005}
+.ah-tile{flex:0 0 92px;padding:12px 6px;display:flex;flex-direction:column;align-items:center;gap:4px}.ah-tile span{font-size:30px}.ah-tile b{font-size:12px;line-height:1.1}
+.agrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.atile{padding:14px 10px;display:flex;flex-direction:column;align-items:center;gap:4px;min-height:118px}
+.atile .aem{font-size:36px}.atile b{font-size:14px}.atile small{font-size:11px;opacity:.85}
+.anew{position:absolute;top:6px;right:6px;background:#ffd24a;color:#3a2300;font-style:normal;font-size:9px;font-weight:900;padding:2px 6px;border-radius:999px}

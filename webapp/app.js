@@ -37,7 +37,7 @@
   function tgBack(show) { if (tg && tg.BackButton) { show ? tg.BackButton.show() : tg.BackButton.hide(); } }
   function avatarInner(p) {
     if (!p) return "?";
-    if (p.is_bot) return "🤖";
+    if (p.is_bot && !p.photo) return "🤖";
     const ini = esc((p.name || "?").trim().slice(0, 1).toUpperCase() || "?");
     const img = p.photo ? `<img src="${esc(p.photo)}" referrerpolicy="no-referrer" onerror="this.remove()">` : "";
     return ini + img;
@@ -332,12 +332,16 @@
         <div><div class="nm">${esc(m.name)}</div><div class="un">@${esc(m.username)}</div></div>
         <div class="coins" id="coins">💰 ${m.coins}</div>
       </div>
+      <div class="arcHero" id="arcHero">
+        <div class="ah-top"><div><div class="ah-t">🕹 ARCADE</div><div class="ah-s">${(HUB.ARCADE_LIST || []).length} games · earn coins · beat your group</div></div><button class="ah-all" id="h-arcade">See all ▸</button></div>
+        <div class="ah-strip">${[...(HUB.ARCADE_LIST || [])].sort((a, b) => ((HUB.ARCADE_NEW || new Set()).has(b.k) ? 1 : 0) - ((HUB.ARCADE_NEW || new Set()).has(a.k) ? 1 : 0)).slice(0, 14).map((a) => `<button class="ah-tile" data-ak="${a.k}" style="background:${HUB.tileBg(a.k)}">${(HUB.ARCADE_NEW || new Set()).has(a.k) ? '<em class="anew">NEW</em>' : ""}<span>${a.e}</span><b>${esc(a.t)}</b></button>`).join("")}</div>
+      </div>
       <div class="card"><button class="btn gold block" id="daily">🎁 Claim daily bonus (+${cfg.daily})</button></div>
       <div class="card"><h3>Entry bet</h3>
         <div class="chips">${cfg.bets.map((b) => `<button class="chip ${b === S.bet ? "on" : ""}" data-bet="${b}">${b ? b : "Free"}</button>`).join("")}</div>
         <div style="color:var(--muted);font-size:12px;margin-top:8px">Winner takes the pot (house keeps ${cfg.rake}%). Coins are virtual.</div>
       </div>
-      <div class="homeSec"><button class="btn gold" id="h-arcade">🕹 Arcade · earn coins</button>${S.isAdmin ? '<button class="btn" id="h-owner">👑 Owner</button>' : ""}</div>
+      <div class="homeSec">${S.isAdmin ? '<button class="btn" id="h-owner">👑 Owner</button>' : ""}</div>
       <div class="card"><h3>Multiplayer games <span style="color:var(--muted);font-weight:400">(${Object.values(cfg.games).filter((g) => !g.hidden).length})</span></h3>
         <div class="cats" id="cats">${["All", ...new Set(Object.values(cfg.games).filter((g) => !g.hidden).map((g) => g.cat || "Classic"))].map((c) => `<button class="chip ${c === (S.cat || "All") ? "on" : ""}" data-cat="${c}">${c}</button>`).join("")}</div>
         <div class="games">${Object.entries(cfg.games).filter(([, g]) => !g.hidden).filter(([, g]) => (S.cat || "All") === "All" || (g.cat || "Classic") === S.cat).map(([k, g]) => `
@@ -357,6 +361,7 @@
     }));
     root.querySelectorAll("[data-cat]").forEach((c) => c.addEventListener("click", () => { S.cat = c.dataset.cat; renderHome(); api("/api/leaderboard").then(renderLeaderboard).catch(() => {}); }));
     const ar = $("#h-arcade"); if (ar) ar.addEventListener("click", () => HUB.openArcade());
+    root.querySelectorAll("[data-ak]").forEach((b) => b.addEventListener("click", () => { const f = HUB.arcadeGames && HUB.arcadeGames[b.dataset.ak]; f ? f() : HUB.openArcade(); }));
     const ow = $("#h-owner"); if (ow) ow.addEventListener("click", () => HUB.openOwner());
     root.querySelectorAll(".gcard").forEach((c) => c.addEventListener("click", async (ev) => {
       if (ev.target.dataset.info) { ev.stopPropagation(); return HUB.showHowto(ev.target.dataset.info); }

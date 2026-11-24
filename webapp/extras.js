@@ -129,10 +129,12 @@
         <div class="xcardp"><h4>📊 Stats</h4>
           <div class="xgrid"><div><b>${st.users}</b><span>users</span></div><div><b>${st.new_today}</b><span>new today</span></div>
           <div><b>${st.chats}</b><span>groups</span></div><div><b>${st.matches}</b><span>matches</span></div>
-          <div><b>${st.live_rooms}</b><span>live rooms</span></div><div><b>${st.online}</b><span>online</span></div></div></div>
+          <div><b>${st.live_rooms}</b><span>live rooms</span></div><div><b>${st.online}</b><span>online</span></div>
+          <div><b>${st.dm_reachable}</b><span>can be DMed</span></div><div><b>${st.dm_unreachable}</b><span>can't DM</span></div></div>
+          <p class="xnote">"Users" = everyone who opened the mini app. Broadcast DMs reach only people who pressed Start in the bot and haven't blocked it.</p></div>
         <div class="xcardp"><h4>📢 Broadcast</h4>
           <textarea id="ow-text" maxlength="3500" rows="4" placeholder="Message (HTML allowed: &lt;b&gt;bold&lt;/b&gt;)"></textarea>
-          <div class="xrow"><select id="ow-target"><option value="users">All users (DM)</option><option value="groups">All groups</option><option value="all">Everyone</option></select>
+          <div class="xrow"><select id="ow-target"><option value="users">All users (DM · ${st.dm_reachable} reachable)</option><option value="groups">All groups</option><option value="all">Everyone</option></select>
           <button class="btn primary" id="ow-send">Send</button></div></div>
         <div class="xcardp"><h4>👤 Player tools</h4>
           <input id="ow-uid" inputmode="numeric" placeholder="Telegram user id">
@@ -187,11 +189,20 @@
     { k: "ponyrush", e: "🐎", t: "Pony Rush", d: "Jump fences, collect coins" },
     { k: "panipuri", e: "🥟", t: "Pani Puri Rush", d: "Serve the right pani fast" },
     { k: "memoflip", e: "🧠", t: "Memo Flip", d: "Match all pairs in 60s" },
+    { k: "railrunner", e: "🚆", t: "Rail Runner", d: "Endless 3-lane runner" },
+    { k: "bubbleshot", e: "🫧", t: "Bubble Shooter", d: "Aim, match 3, pop them all" },
+    { k: "blockdrop", e: "🧩", t: "Block Drop", d: "Falling blocks, clear rows" },
+    { k: "hoopshot", e: "🏀", t: "Hoop Shot", d: "Swipe to sink baskets" },
   ];
+  const NEWK = new Set(["cricketblitz", "ponyrush", "panipuri", "memoflip", "railrunner", "bubbleshot", "blockdrop", "hoopshot"]);
+  const hue = (k) => { let h = 0; for (const c of k) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+  const tileBg = (k) => `linear-gradient(145deg,hsl(${hue(k)} 75% 52%),hsl(${(hue(k) + 40) % 360} 70% 32%))`;
+  HUB.ARCADE_LIST = ARCADE; HUB.ARCADE_NEW = NEWK; HUB.tileBg = tileBg;
   HUB.openArcade = function () {
-    const o = overlay("🕹 Arcade", `<p class="xnote">Solo games that pay coins (daily cap applies). Anti-cheat runs on the server.</p>
-      <div class="xlist">${ARCADE.map((a) => `<button class="xitem" data-k="${a.k}"><span class="xem">${a.e}</span><span><b>${a.t}</b><small>${a.d}</small></span><i>▶</i></button>`).join("")}</div>`);
-    o.querySelectorAll(".xitem").forEach((b) => b.addEventListener("click", () => {
+    const ord = [...ARCADE].sort((a, b) => (NEWK.has(b.k) ? 1 : 0) - (NEWK.has(a.k) ? 1 : 0));
+    const o = overlay("🕹 Arcade", `<p class="xnote">${ARCADE.length} solo games that pay coins (daily cap applies). Anti-cheat runs on the server. In a group your scores also count on the group board.</p>
+      <div class="agrid">${ord.map((a) => `<button class="atile" data-k="${a.k}" style="background:${tileBg(a.k)}">${NEWK.has(a.k) ? '<em class="anew">NEW</em>' : ""}<span class="aem">${a.e}</span><b>${a.t}</b><small>${a.d}</small></button>`).join("")}</div>`);
+    o.querySelectorAll(".atile").forEach((b) => b.addEventListener("click", () => {
       const k = b.dataset.k;
       if (HUB.arcadeGames && HUB.arcadeGames[k]) HUB.arcadeGames[k]();
       else HUB.toast("Reload the app to play");
