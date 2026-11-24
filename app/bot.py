@@ -89,6 +89,7 @@ ARCADE = [  # solo games that pay coins; also playable from groups (the group sh
     ("snake", "🐍", "Snake"), ("flap", "🐤", "Flappy Wing"), ("galaxy", "🚀", "Galaxy Shooter"),
     ("stack", "🏗️", "Stack Tower"), ("roadrush", "🏎️", "Road Rush"), ("mole", "🔨", "Whack-a-Mole"),
     ("cricketblitz", "🏏", "Cricket Blitz"), ("ponyrush", "🐎", "Pony Rush"), ("panipuri", "🥟", "Pani Puri Rush"), ("memoflip", "🧠", "Memo Flip"),
+    ("railrunner", "🚆", "Rail Runner"), ("bubbleshot", "🫧", "Bubble Shooter"), ("blockdrop", "🧩", "Block Drop"), ("hoopshot", "🏀", "Hoop Shot"),
 ]
 ARCADE_KEYS = {k for k, _, _ in ARCADE}
 GROUP_COMMANDS_EXTRA = [BotCommand(command="arcade", description="🕹 Arcade games - earn coins")]
@@ -148,6 +149,8 @@ class Gate(BaseMiddleware):
             if chat is not None and chat.type in (ChatType.GROUP, ChatType.SUPERGROUP):
                 self.db.upsert_chat(chat.id, chat.title or "", ctype(chat))
                 self.db.chat_user_add(chat.id, user.id)
+            if chat is not None and ctype(chat) == "private":
+                self.db.mark_dm(user.id, True)   # they talked to the bot in DM, so it can message them
         return await handler(event, data)
 
 
@@ -870,8 +873,9 @@ def build(settings, db, rooms):
                 return ("retry", e.retry_after)
             except TelegramForbiddenError:
                 return "blocked"
-            except TelegramBadRequest:
-                return "gone"
+            except TelegramBadRequest as e:
+                s = str(e).lower()
+                return "gone" if any(x in s for x in ("chat not found", "user not found", "deactivated", "kicked", "not a member")) else "fail"
             except Exception:
                 return "fail"
 
@@ -887,13 +891,25 @@ def build(settings, db, rooms):
                 db.mark_dm(t, False)
             else:
                 db.set_chat_active(t, False)
+        st_all = db.stats()
         try:
             await status_msg.edit_text(
-                f"✅ <b>Broadcast done</b>\n\nDelivered: <b>{res['ok']}</b> / {res['total']}\n"
-                f"Blocked/removed: {res['blocked'] + res['gone']}\nFailed: {res['fail']}"
+                f"✅ <b>Broadcast done</b>\n\nDelivered: <b>{res['ok']}</b> / {res['total']} targets\n"
+                f"Blocked/removed: {res['blocked'] + res['gone']}\nFailed: {res['fail']}\n\n"
+                f"ℹ️ Total users: <b>{st_all['users']}</b> (everyone who ever opened the mini app). A broadcast can only DM people who "
+                f"pressed Start in the bot and have not blocked it: <b>{st_all['dm_reachable']}</b> now, "
+                f"<b>{st_all['dm_unreachable']}</b> unreachable. Groups: {st_all['chats']}."
             )
         except Exception:
             pass
+
+    @r.message(Command("resetdm"))
+    async def resetdm(m: Message):
+        """Owner: mark every user DM-reachable again (use after a broadcast wrongly flagged people)."""
+        if not is_admin(m.from_user.id):
+            return
+        db.reset_dm()
+        await m.reply("✅ All users marked reachable again. The next broadcast will retry everyone.")
 
     @r.message(Command("broadcast"))
     async def broadcast_cmd(m: Message, command: CommandObject):

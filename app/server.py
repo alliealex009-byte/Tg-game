@@ -410,7 +410,12 @@ async def owner_broadcast(request: Request):
             n = type(e).__name__
             if n == "TelegramRetryAfter":
                 return ("retry", getattr(e, "retry_after", 3))
-            return "blocked" if n == "TelegramForbiddenError" else ("gone" if n == "TelegramBadRequest" else "fail")
+            if n == "TelegramForbiddenError":
+                return "blocked"
+            if n == "TelegramBadRequest":
+                s = str(e).lower()
+                return "gone" if any(x in s for x in ("chat not found", "user not found", "deactivated", "kicked", "not a member")) else "fail"
+            return "fail"
 
     async def job():
         res = await bcast.run(targets, send, 0.05)

@@ -18,7 +18,20 @@ from .games.base import GameError
 log = logging.getLogger("rooms")
 ROOM_MEMORY_H = 24
 
-BOT_NAMES = ["Bot Ravi", "Bot Mia", "Bot Zed", "Bot Luna", "Bot Kai", "Bot Nova"]
+GIRL_NAMES = ["Priya", "Ananya", "Diya", "Kavya", "Ishita", "Riya", "Sneha", "Meera", "Neha", "Pooja", "Aarohi", "Tanvi"]
+BOY_NAMES = ["Aarav", "Rohan", "Vikram", "Arjun", "Kabir", "Yash", "Dev", "Rahul", "Aditya", "Karan", "Ishaan", "Vihaan"]
+BOT_NAMES = GIRL_NAMES + BOY_NAMES
+
+
+def pick_bot_identity(used: set, rng=None):
+    """About half the computer players are Indian girls; every one gets a matching cartoon DP (/avatars/g<i>.png | b<i>.png)."""
+    import random as _r
+    rng = rng or _r.SystemRandom()
+    girl = rng.random() < 0.5
+    pool = [(n, f"/avatars/{'g' if girl else 'b'}{i}.png") for i, n in enumerate(GIRL_NAMES if girl else BOY_NAMES) if n not in used]
+    if not pool:
+        pool = [(n, f"/avatars/{'g' if i < 12 else 'b'}{i % 12}.png") for i, n in enumerate(BOT_NAMES) if n not in used]
+    return rng.choice(pool) if pool else (f"Player {secrets.token_hex(1).upper()}", "/avatars/b0.png")
 KICK_AFTER = 4   # consecutive turn timeouts before a human is removed from a running game
 AFK_AFTER = 2    # timeouts before a player is flagged AFK (their turns then play out quickly)
 CHAT_KEEP = 40
@@ -257,11 +270,11 @@ class RoomManager:
         if len(room.players) >= room.max_players:
             raise GameError("The room is full")
         used = {p.name for p in room.players}
-        name = next((n for n in BOT_NAMES if n not in used), f"Bot {secrets.token_hex(1).upper()}")
+        name, photo = pick_bot_identity(used)
         bot_uid = -1
         while room.player(bot_uid):
             bot_uid -= 1
-        room.players.append(Player(bot_uid, name, None, None, is_bot=True))
+        room.players.append(Player(bot_uid, name, None, photo, is_bot=True))
         await self.broadcast(room)
 
     async def remove_bot(self, room, uid, bot_uid):

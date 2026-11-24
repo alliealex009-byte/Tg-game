@@ -100,6 +100,9 @@ class DB:
     def mark_dm(self, uid: int, ok: bool):
         self.c.execute("UPDATE users SET dm_ok=? WHERE id=?", (1 if ok else 0, uid))
 
+    def reset_dm(self):
+        self.c.execute("UPDATE users SET dm_ok=1")
+
     def user_ids(self, only_dm_ok: bool = True):
         q = "SELECT id FROM users WHERE banned=0" + (" AND dm_ok=1" if only_dm_ok else "")
         return [r["id"] for r in self.c.execute(q)]
@@ -277,5 +280,7 @@ class DB:
             "coins_in_circulation": q("SELECT COALESCE(SUM(coins),0) FROM users"),
             "chats": q("SELECT COUNT(*) FROM chats WHERE active=1"),
             "banned": q("SELECT COUNT(*) FROM users WHERE banned=1"),
+            "dm_reachable": q("SELECT COUNT(*) FROM users WHERE banned=0 AND dm_ok=1"),
+            "dm_unreachable": q("SELECT COUNT(*) FROM users WHERE banned=0 AND dm_ok=0"),
             "new_today": q("SELECT COUNT(*) FROM users WHERE created > strftime('%s','now') - 86400"),
         }
