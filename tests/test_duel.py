@@ -43,3 +43,16 @@ class DuelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BotIdentityTests(unittest.TestCase):
+    def test_bot_names_half_girls_with_dp(self):
+        import os
+        from app import rooms
+        girls = 0
+        for _ in range(200):
+            n, ph = rooms.pick_bot_identity(set())
+            self.assertTrue(os.path.exists(os.path.join(os.path.dirname(os.path.dirname(__file__)), "webapp", ph.lstrip("/"))), ph)
+            self.assertEqual(n in rooms.GIRL_NAMES, ph.startswith("/avatars/g"))
+            girls += n in rooms.GIRL_NAMES
+        self.assertTrue(70 < girls < 130)

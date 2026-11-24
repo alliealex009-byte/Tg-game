@@ -24,9 +24,9 @@ async def main():
             await page.goto(f"{E.BASE}/?dev=Alex")
             await page.wait_for_selector(".home .gcard", timeout=15000)
             await page.click("#h-arcade")
-            await page.wait_for_selector(".xitem")
-            n = await page.evaluate("document.querySelectorAll('.xitem').length")
-            if n != 24:
+            await page.wait_for_selector(".atile")
+            n = await page.evaluate("document.querySelectorAll('.atile').length")
+            if n != 28:
                 fails.append(f"arcade items {n}")
             for k, sel in (("byteblock", "#bb"), ("tiledash", "#td"), ("neonslice", "#xc"), ("minttap", "#mtgo"), ("turbocoin", "#tcb")):
                 await page.click(f"[data-k='{k}']")
@@ -50,7 +50,7 @@ async def main():
                 await asyncio.sleep(0.6)
                 await page.screenshot(path=str(E.OUT / f"arc2_{k}.png"))
                 await page.click("#xback")
-                await page.wait_for_selector(".xitem")
+                await page.wait_for_selector(".atile")
             for k, sel in (("sprout", "#idc"), ("paws", "#idf"), ("world", ".idp"), ("realm", "#idm button")):
                 await page.click(f"[data-k='{k}']")
                 await page.wait_for_selector(sel, timeout=5000)
@@ -69,7 +69,7 @@ async def main():
                 await asyncio.sleep(0.4)
                 await page.screenshot(path=str(E.OUT / f"arc3_{k}.png"))
                 await page.click("#xback")
-                await page.wait_for_selector(".xitem")
+                await page.wait_for_selector(".atile")
             if h.errors:
                 fails.append(f"JS errors: {h.errors[:3]}")
             await b.close()

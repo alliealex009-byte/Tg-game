@@ -25,8 +25,8 @@ async def main():
             await page.wait_for_selector(".home .gcard", timeout=15000)
             for k in ("snake", "flap", "galaxy", "stack", "roadrush", "mole", "cricketblitz", "ponyrush", "panipuri", "memoflip"):
                 await page.click("#h-arcade")
-                await page.wait_for_selector(".xitem")
-                await page.click(f"[data-k='{k}']")
+                await page.wait_for_selector(".atile")
+                await page.click(f".atile[data-k='{k}']")
                 await page.wait_for_selector("#xc", timeout=5000)
                 box = await page.locator("#xc").bounding_box()
                 cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2

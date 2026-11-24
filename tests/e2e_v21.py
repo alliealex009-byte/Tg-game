@@ -46,7 +46,7 @@ async def main():
 
             # arcade
             await page.click("#h-arcade")
-            await page.wait_for_selector(".xitem")
+            await page.wait_for_selector(".atile")
             await page.screenshot(path=str(OUT / "v21_arcade.png"))
             await page.click("[data-k='bricks']")
             await page.wait_for_selector("#xc")

@@ -265,7 +265,7 @@ class BotHandlerTests(unittest.TestCase):
         self.run_(self.h["arcade_cmd"](g))
         kb = g.answer.call_args.kwargs["reply_markup"].inline_keyboard
         urls = [b.url for row in kb for b in row]
-        self.assertEqual(len(urls), 24)
+        self.assertEqual(len(urls), 28)
         self.assertTrue(all("start=arc_" in u for u in urls))            # groups can't open web_app buttons
         m = msg(2)
         self.run_(self.h["start"](m, NS(args="arc_bricks")))
@@ -319,7 +319,7 @@ class BotHandlerTests(unittest.TestCase):
         self.run_(self.h["arcade_cmd"](g))
         urls = [b.url for row in g.answer.call_args.kwargs["reply_markup"].inline_keyboard for b in row]
         self.assertTrue(all(u.endswith("_n55") for u in urls))           # the group id rides along in the link
-        self.assertEqual(len(urls), 24)
+        self.assertEqual(len(urls), 28)
         e = self._group_msg()
         self.run_(self.h["arcade_top"](e))
         self.assertIn("No arcade scores", e.reply.call_args.args[0])
