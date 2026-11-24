@@ -174,3 +174,9 @@ For a quick look in a browser without Telegram, set `DEV_MODE=1` and open `https
 - Group status line: when someone starts an arcade game from a group, the bot posts "X is playing <game>..." and edits it to the score afterwards (Bot API has no real "playing" chat action).
 - Owner coin commands: `/give id|@user amount` (or reply), `/giveall amount`, `/givegroup amount` (members the bot has seen in that group).
 - Credits (owner AAKASH, sister bot @Groupingabot, "add me to your group") in arcade/game cover captions.
+
+## v4.1
+- New arcade games: Rail Runner, Bubble Shooter, Block Drop, Hoop Shot; Cricket Blitz rebuilt as a top-down stadium (aim into fielder gaps + timing, catches, fours, sixes); Pony Rush, Pani Puri Rush and Memo Flip redrawn.
+- Home screen has a highlighted Arcade hero strip; the Arcade menu is a gradient tile grid with NEW badges.
+- Computer players now use Indian names (about half girls) with cartoon DPs (`webapp/avatars`, regenerate with `tools/make_avatars.py`).
+- Owner panel/broadcast: shows reachable vs unreachable users (broadcast can only DM people who pressed Start). `/resetdm` re-marks everyone reachable. Only genuine "chat not found" errors flag a user as unreachable now.
