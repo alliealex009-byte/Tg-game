@@ -44,6 +44,8 @@ async def lifespan(app: FastAPI):
     app.state.bot_username = ""
     app.state.bot = None
     app.state.arc_titles = {}
+    app.state.seen = {}      # uid -> (last api call ts, name, photo): who is online right now
+    app.state.challenged = {}
     app.state.playing = {}   # (group id, uid) -> (status message id, started ts)
     tasks = [asyncio.create_task(rooms.janitor()), asyncio.create_task(rooms.host_watch())]
     mongo = None
@@ -105,6 +107,11 @@ async def no_cache(request: Request, call_next):
     return resp
 
 
+SEEN: dict = {}        # uid -> (last api call ts, name, photo): who is online right now
+CHALLENGE_TS: dict = {}
+ONLINE_WINDOW = 120
+
+
 def public_user(u: dict) -> dict:
     return {k: u[k] for k in ("id", "name", "username", "photo", "coins", "games", "wins")}
 
@@ -117,6 +124,7 @@ def auth_user(request: Request) -> dict:
     u = db.upsert_user(tg["id"], tg["name"], tg["username"], tg["photo"])
     if u.get("banned"):
         raise HTTPException(status_code=403, detail="Your account is banned")
+    SEEN[u["id"]] = (time.time(), u["name"], u.get("photo"))   # presence for the Live list
     return u
 
 
@@ -360,12 +368,97 @@ def owner_user(request: Request) -> dict:
     return u
 
 
+def room_activity(uid: int):
+    for r in rooms.rooms.values():
+        if r.conns.get(uid):
+            info = GAME_INFO.get(r.game_type, {})
+            return {"room": r.code, "game": r.game_type, "title": info.get("title", r.game_type), "emoji": info.get("emoji", "🎮"), "status": r.status}
+    return None
+
+
+@app.post("/api/live")
+async def live(request: Request):
+    """Who is online and which matches can be watched. Names/photos only - ids are shown to the owner."""
+    u = auth_user(request)
+    now = time.time()
+    is_owner = u["id"] in settings.admin_ids
+    online = []
+    for uid, (ts, name, photo) in list(SEEN.items()):
+        act = room_activity(uid)
+        if now - ts > ONLINE_WINDOW and not act:
+            if now - ts > 3600:
+                SEEN.pop(uid, None)
+            continue
+        if uid == u["id"]:
+            continue
+        row = {"name": name, "photo": photo, "act": act, "uid": uid}
+        online.append(row)
+    for r in rooms.rooms.values():     # players connected in a room but not seen via the REST api
+        for p in r.players:
+            if r.conns.get(p.uid) and not p.is_bot and p.uid not in SEEN and p.uid != u["id"]:
+                online.append({"name": p.name, "photo": p.photo, "act": room_activity(p.uid), "uid": p.uid})
+    online.sort(key=lambda x: (x["act"] is None, x["name"].lower()))
+    matches = []
+    for r in rooms.rooms.values():
+        if r.status not in ("playing", "lobby") or not r.players:
+            continue
+        info = GAME_INFO.get(r.game_type, {})
+        humans = [p for p in r.players if not p.is_bot]
+        if not humans or not any(r.conns.get(p.uid) for p in humans):
+            continue
+        matches.append({"code": r.code, "game": r.game_type, "title": info.get("title", r.game_type), "emoji": info.get("emoji", "🎮"),
+                        "status": r.status, "players": [p.name for p in r.players][:6], "max": r.max_players, "bet": r.bet,
+                        "watching": sum(1 for w in r.watchers if r.conns.get(w))})
+    matches.sort(key=lambda m: (m["status"] != "playing", -m["watching"]))
+    for row in online:
+        row["challengeable"] = True
+    return {"online": online[:80], "online_total": len(online), "matches": matches[:40], "you_online": 1 + len(online)}
+
+
+@app.post("/api/challenge")
+async def challenge(request: Request):
+    """Create a room and DM the other player an invite button. Body: {uid, game}"""
+    u = auth_user(request)
+    d = await body(request)
+    try:
+        tid = int(d.get("uid"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Pick a player")
+    game = d.get("game")
+    if game not in GAME_INFO or tid == u["id"]:
+        raise HTTPException(status_code=400, detail="Pick a game and another player")
+    now = time.time()
+    if now - CHALLENGE_TS.get(u["id"], 0) < 20:
+        raise HTTPException(status_code=429, detail="Wait a few seconds between challenges")
+    CHALLENGE_TS[u["id"]] = now
+    t = db.get_user(tid)
+    if t is None or t.get("banned"):
+        raise HTTPException(status_code=404, detail="Player not found")
+    try:
+        room = rooms.create(u["id"], game, 0)
+    except GameError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    info = GAME_INFO[game]
+    dm = False
+    bot = app.state.bot
+    if bot is not None and t.get("dm_ok", 1):
+        try:
+            from aiogram.types import InlineKeyboardButton as B, InlineKeyboardMarkup as M, WebAppInfo
+            await bot.send_message(tid, f"⚔️ <b>{html.escape(u['name'])}</b> challenges you to <b>{info['emoji']} {html.escape(info['title'])}</b>!",
+                                   reply_markup=M(inline_keyboard=[[B(text="▶️ Accept", web_app=WebAppInfo(url=f"{settings.webapp_url}?room={room.code}"))]]))
+            dm = True
+        except Exception:
+            log.info("challenge DM to %s failed", tid)
+    return {"code": room.code, "dm": dm}
+
+
 @app.post("/api/owner/stats")
 async def owner_stats(request: Request):
     owner_user(request)
     st = db.stats()
     st["live_rooms"] = len(rooms.rooms)
     st["online"] = sum(len(r.conns) for r in rooms.rooms.values())
+    st["online_now"] = sum(1 for ts, _, _ in SEEN.values() if time.time() - ts < ONLINE_WINDOW)
     return st
 
 

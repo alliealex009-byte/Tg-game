@@ -3,6 +3,8 @@ join-request verification, referrals. Game rules live in app/games, pure helpers
 from __future__ import annotations
 
 import asyncio
+import io
+import time
 import contextlib
 import html
 import logging
@@ -14,6 +16,7 @@ from aiogram.enums import ChatType, ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import (
+    BufferedInputFile,
     BotCommand,
     CallbackQuery,
     ChatJoinRequest,
@@ -26,7 +29,7 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from . import broadcast
+from . import broadcast, safety, welcome
 from .games import GAME_INFO, LISTED
 from .games.base import GameError
 from .verify import Verifier
@@ -79,7 +82,7 @@ GROUP_COMMANDS = [
     BotCommand(command="help", description="How to play"),
 ] + [BotCommand(command=GAME_INFO[k]["cmd"], description=f"{GAME_INFO[k]['emoji']} {GAME_INFO[k]['title']} [bet]"[:100])
      for k in ("ludo", "uno", "carrom", "chess", "snakes", "tictactoe", "connect4", "teenpatti") if k in GAME_INFO]
-ADMIN_GROUP_COMMANDS = [BotCommand(command="verify", description="Join-request verification on/off (admins)")]
+ADMIN_GROUP_COMMANDS = [BotCommand(command="verify", description="Join-request verification on/off (admins)"), BotCommand(command="welcome", description="Welcome cards on/off (admins)")]
 
 ARCADE = [  # solo games that pay coins; also playable from groups (the group shares one leaderboard via /top)
     ("bricks", "🧱", "Break Bricks"), ("tapverse", "🪙", "TapVerse"), ("quickdrop", "☄️", "QuickDrop"), ("gridpop", "🔷", "GridPop"),
@@ -313,7 +316,22 @@ def build(settings, db, rooms):
                     pass
         if m.chat.type != ChatType.PRIVATE:
             return await group_picker(m)
-        await send_banner(m.chat.id, welcome_text(u), main_menu(m.from_user.id))
+        await send_dm_card(m, u)
+
+    async def send_dm_card(m: Message, u):
+        """Personal gradient welcome (own photo, name, daily quote); falls back to the plain banner."""
+        try:
+            photo = None   # profile photos are intentionally not used on cards
+            quote = welcome.pick_quote(m.from_user.id, int(time.time() // 86400))
+            png = await asyncio.to_thread(welcome.render_dm, safety.safe_name(m.from_user.full_name, m.from_user.id), safety.safe_username(m.from_user.username), m.from_user.id, photo,
+                                          quote, u["coins"], len(LISTED), settings.owner_name)
+            cap = welcome_text(u) + f"\n\n💬 <i>“{esc(quote[0])}”</i> — {esc(quote[1])}"
+            return await bot.send_photo(m.chat.id, BufferedInputFile(png, "welcome.png"), caption=cap[:1024], reply_markup=main_menu(m.from_user.id))
+        except TelegramForbiddenError:
+            raise
+        except Exception:
+            log.exception("dm welcome card failed")
+            return await send_banner(m.chat.id, welcome_text(u), main_menu(m.from_user.id))
 
     @r.callback_query(F.data == "m:home")
     async def cb_home(cb: CallbackQuery):
@@ -682,6 +700,56 @@ def build(settings, db, rooms):
                 log.info("could not post welcome in %s", chat.id)
         elif st in ("left", "kicked"):
             db.set_chat_active(chat.id, False)
+
+    # ------------------------------------------------------------------ welcome cards for new members
+    def welcome_on(chat_id: int) -> bool:
+        v = db.kv_get(f"wl:{chat_id}")
+        return (db.kv_get("welcome_default", "1") == "1") if v is None else v == "1"
+
+    join_times: dict = {}
+
+    @r.message(F.new_chat_members)
+    async def welcome_new(m: Message):
+        if m.chat.type not in (ChatType.GROUP, ChatType.SUPERGROUP) or not welcome_on(m.chat.id):
+            return
+        now = time.time()
+        recent = [t for t in join_times.get(m.chat.id, []) if now - t < 60] + [now]
+        join_times[m.chat.id] = recent
+        if len(recent) > 6:        # a raid / mass add: stay quiet instead of spamming the group
+            return
+        try:
+            count = await bot.get_chat_member_count(m.chat.id)
+        except Exception:
+            count = None
+        for u in [x for x in m.new_chat_members if not x.is_bot][:3]:
+            db.chat_user_add(m.chat.id, u.id)
+            photo = None   # profile photos are intentionally not used on cards
+            nm_ = safety.safe_name(u.full_name, u.id)
+            un_ = safety.safe_username(u.username)
+            try:
+                png = await asyncio.to_thread(welcome.render, nm_, un_, u.id, "" if safety.is_bad(m.chat.title) else (m.chat.title or ""), photo, count,
+                                              settings.owner_name, "@" + settings.sister_bot.lstrip("@"))
+                mention = f'<a href="tg://user?id={u.id}">{esc(nm_)}</a>'
+                cap = (f"👋 <b>Welcome, {mention}!</b>\n"
+                       f"🆔 <code>{u.id}</code>" + (f" · @{esc(un_)}" if un_ else "") + "\n\n"
+                       "🎮 Play with everyone here: /play · 🕹 solo arcade: /arcade\n"
+                       f"{sister_line()}")
+                await bot.send_photo(m.chat.id, BufferedInputFile(png, "welcome.png"), caption=cap,
+                                     reply_markup=Kb(inline_keyboard=[[Btn(text="🎮 Play now", url=f"https://t.me/{ctx['username']}?start=go")]]))
+            except Exception:
+                log.exception("welcome card failed in %s", m.chat.id)
+
+    @r.message(Command("welcome"))
+    async def welcome_cmd(m: Message, command: CommandObject):
+        if m.chat.type == ChatType.PRIVATE:
+            return await m.reply("Use /welcome in your group: <code>/welcome on</code> or <code>/welcome off</code> (admins only).")
+        mem = await bot.get_chat_member(m.chat.id, m.from_user.id)
+        if mem.status not in ("creator", "administrator") and not is_admin(m.from_user.id):
+            return
+        a = (command.args or "").strip().lower()
+        if a in ("on", "off"):
+            db.kv_set(f"wl:{m.chat.id}", "1" if a == "on" else "0")
+        await m.reply(f"👋 Welcome cards are {'ON ✅' if welcome_on(m.chat.id) else 'OFF ⛔'}. Change: <code>/welcome on</code> / <code>/welcome off</code>")
 
     # ------------------------------------------------------------------ join-request verification
     def verify_on(chat_id: int) -> bool:

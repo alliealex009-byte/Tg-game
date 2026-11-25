@@ -1,6 +1,8 @@
 """SQLite storage: users, coin ledger, match history. Synchronous and tiny on purpose."""
 from __future__ import annotations
 
+from . import safety
+
 import json
 import os
 import sqlite3
@@ -179,6 +181,10 @@ class DB:
 
     def upsert_user(self, uid: int, name: str, username, photo):
         now = time.time()
+        if safety.is_bad(name) or safety.is_bad(username):
+            photo = None
+        name = safety.safe_name(name, uid)
+        username = safety.safe_username(username) or f"user_{uid}"
         if self.get_user(uid) is None:
             self.c.execute(
                 "INSERT INTO users(id,name,username,photo,coins,created,last_seen) VALUES(?,?,?,?,?,?,?)",
