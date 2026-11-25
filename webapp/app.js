@@ -341,7 +341,7 @@
         <div class="chips">${cfg.bets.map((b) => `<button class="chip ${b === S.bet ? "on" : ""}" data-bet="${b}">${b ? b : "Free"}</button>`).join("")}</div>
         <div style="color:var(--muted);font-size:12px;margin-top:8px">Winner takes the pot (house keeps ${cfg.rake}%). Coins are virtual.</div>
       </div>
-      <div class="homeSec">${S.isAdmin ? '<button class="btn" id="h-owner">👑 Owner</button>' : ""}</div>
+      <div class="homeSec"><button class="btn live" id="h-live">🟢 Live now · watch matches &amp; challenge online players</button>${S.isAdmin ? '<button class="btn" id="h-owner">👑 Owner</button>' : ""}</div>
       <div class="card"><h3>Multiplayer games <span style="color:var(--muted);font-weight:400">(${Object.values(cfg.games).filter((g) => !g.hidden).length})</span></h3>
         <div class="cats" id="cats">${["All", ...new Set(Object.values(cfg.games).filter((g) => !g.hidden).map((g) => g.cat || "Classic"))].map((c) => `<button class="chip ${c === (S.cat || "All") ? "on" : ""}" data-cat="${c}">${c}</button>`).join("")}</div>
         <div class="games">${Object.entries(cfg.games).filter(([, g]) => !g.hidden).filter(([, g]) => (S.cat || "All") === "All" || (g.cat || "Classic") === S.cat).map(([k, g]) => `
@@ -362,6 +362,7 @@
     root.querySelectorAll("[data-cat]").forEach((c) => c.addEventListener("click", () => { S.cat = c.dataset.cat; renderHome(); api("/api/leaderboard").then(renderLeaderboard).catch(() => {}); }));
     const ar = $("#h-arcade"); if (ar) ar.addEventListener("click", () => HUB.openArcade());
     root.querySelectorAll("[data-ak]").forEach((b) => b.addEventListener("click", () => { const f = HUB.arcadeGames && HUB.arcadeGames[b.dataset.ak]; f ? f() : HUB.openArcade(); }));
+    const lv = $("#h-live"); if (lv) lv.addEventListener("click", () => HUB.openLive());
     const ow = $("#h-owner"); if (ow) ow.addEventListener("click", () => HUB.openOwner());
     root.querySelectorAll(".gcard").forEach((c) => c.addEventListener("click", async (ev) => {
       if (ev.target.dataset.info) { ev.stopPropagation(); return HUB.showHowto(ev.target.dataset.info); }
@@ -843,7 +844,7 @@
     else if (/^[0-9a-fA-F]{8}$/.test(sp)) joinRoom(sp.toUpperCase());
     else { showHome(); if (params.get("owner") && S.isAdmin) HUB.openOwner(); }
   }
-  Object.assign(window.HUB, { api, tg, refreshHome: () => renderHome(), S, send, esc, sleep, sfx, haptic, avatarInner, handle, topbarHTML, diceHTML, toast, tumble, confetti, tone, noise });
+  Object.assign(window.HUB, { joinRoom, api, tg, refreshHome: () => renderHome(), S, send, esc, sleep, sfx, haptic, avatarInner, handle, topbarHTML, diceHTML, toast, tumble, confetti, tone, noise });
   window.HUB.UI.ludo = { build: buildLudo, apply: applyLudo };
   window.HUB.UI.tictactoe = { build: buildTTT, apply: applyTTT };
   boot();

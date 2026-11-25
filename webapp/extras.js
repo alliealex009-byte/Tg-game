@@ -131,7 +131,7 @@
           <div><b>${st.chats}</b><span>groups</span></div><div><b>${st.matches}</b><span>matches</span></div>
           <div><b>${st.live_rooms}</b><span>live rooms</span></div><div><b>${st.online}</b><span>online</span></div>
           <div><b>${st.dm_reachable}</b><span>can be DMed</span></div><div><b>${st.dm_unreachable}</b><span>can't DM</span></div></div>
-          <p class="xnote">"Users" = everyone who opened the mini app. Broadcast DMs reach only people who pressed Start in the bot and haven't blocked it.</p></div>
+          <button class="btn live" id="xlive">🟢 See who is online &amp; watch live matches</button><p class="xnote">"Users" = everyone who opened the mini app. Broadcast DMs reach only people who pressed Start in the bot and haven't blocked it.</p></div>
         <div class="xcardp"><h4>📢 Broadcast</h4>
           <textarea id="ow-text" maxlength="3500" rows="4" placeholder="Message (HTML allowed: &lt;b&gt;bold&lt;/b&gt;)"></textarea>
           <div class="xrow"><select id="ow-target"><option value="users">All users (DM · ${st.dm_reachable} reachable)</option><option value="groups">All groups</option><option value="all">Everyone</option></select>
@@ -142,6 +142,7 @@
           <div class="xrow"><button class="btn" data-a="info">Info</button><button class="btn" data-a="coins">Give coins</button>
           <button class="btn" data-a="ban">Ban</button><button class="btn" data-a="unban">Unban</button></div>
           <div id="ow-out" class="xout"></div></div>`;
+        $("#xlive").addEventListener("click", () => HUB.openLive(true));
         $("#ow-send").addEventListener("click", async () => {
           const text = $("#ow-text").value.trim(); if (!text) return HUB.toast("Write a message first");
           const tgt = $("#ow-target").value;
@@ -198,6 +199,46 @@
   const hue = (k) => { let h = 0; for (const c of k) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
   const tileBg = (k) => `linear-gradient(145deg,hsl(${hue(k)} 75% 52%),hsl(${(hue(k) + 40) % 360} 70% 32%))`;
   HUB.ARCADE_LIST = ARCADE; HUB.ARCADE_NEW = NEWK; HUB.tileBg = tileBg;
+
+  /* ---------------- Live now: online players + matches you can watch ---------------- */
+  HUB.openLive = function (owner) {
+    const o = overlay("🟢 Live now", `<div class="xnote" id="lvnote">Loading…</div><div id="lvbody"></div>`);
+    let alive = true, timer = null; const esc = HUB.esc;
+    const duelGames = () => Object.entries(HUB.S.cfg.games || {}).filter(([k, g]) => g.max === 2 && !g.hidden).map(([k, g]) => ({ k, t: g.title, e: g.emoji }));
+    const pickGame = (target) => {
+      const games = duelGames();
+      const sheet = document.createElement("div"); sheet.className = "lvsheet";
+      sheet.innerHTML = `<div class="lvbox"><b>Challenge ${esc(target.name)}</b><div class="lvgames">${games.map((g) => `<button data-g="${g.k}">${g.e}<span>${esc(g.t)}</span></button>`).join("")}</div><button class="btn" data-x="1">Cancel</button></div>`;
+      o.appendChild(sheet);
+      sheet.addEventListener("click", async (e) => {
+        if (e.target.closest("[data-x]") || e.target === sheet) return sheet.remove();
+        const b = e.target.closest("[data-g]"); if (!b) return;
+        try {
+          const r = await HUB.api("/api/challenge", { method: "POST", body: { uid: target.uid, game: b.dataset.g } });
+          HUB.toast(r.dm ? "Invite sent! Waiting for them…" : "Room ready. They can't be DMed - share the link");
+          alive = false; clearInterval(timer); closeOverlay(); HUB.joinRoom(r.code);
+        } catch (err) { HUB.toast(err.message); }
+      });
+    };
+    let data = { online: [], matches: [] };
+    const draw = () => {
+      if (!alive || !$("#lvbody")) return;
+      $("#lvnote").textContent = `${data.online_total + 1} online now · ${data.matches.length} live room${data.matches.length === 1 ? "" : "s"}`;
+      $("#lvbody").innerHTML = `
+        <h4 class="lvh">🎥 Live matches</h4>
+        ${data.matches.length ? data.matches.map((m) => `<div class="lvrow"><span class="lvem">${m.emoji}</span><div class="lvt"><b>${esc(m.title)}</b><small>${m.players.map(esc).join(" vs ")} ${m.bet ? "· 🪙" + m.bet : ""}${m.watching ? " · 👁 " + m.watching : ""}</small></div><button class="btn ${m.status === "playing" ? "gold" : ""}" data-w="${m.code}">${m.status === "playing" ? "👁 Watch" : "Join"}</button></div>`).join("") : '<p class="xnote">No live matches right now. Start one from Home!</p>'}
+        <h4 class="lvh">🟢 Online players</h4>
+        ${data.online.length ? data.online.map((p, i) => `<div class="lvrow"><span class="lvav">${HUB.avatarInner ? HUB.avatarInner({ name: p.name, photo: p.photo }) : esc(p.name[0])}</span><div class="lvt"><b>${esc(p.name)}${p.uid && owner ? ` <small>#${p.uid}</small>` : ""}</b><small>${p.act ? p.act.emoji + " " + esc(p.act.title) + (p.act.status === "playing" ? " · playing" : " · in lobby") : "Browsing"}</small></div>${p.act ? `<button class="btn" data-w="${p.act.room}">${p.act.status === "playing" ? "👁" : "Join"}</button>` : ""}<button class="btn gold" data-c="${i}">⚔️</button>${owner ? `<button class="btn" data-coin="${p.uid}">🪙</button>` : ""}</div>`).join("") : '<p class="xnote">Nobody else is online right now. Invite friends from the home screen!</p>'}`;
+    };
+    const load = async () => { try { data = await HUB.api("/api/live", { method: "POST", body: {} }); draw(); } catch (e) { $("#lvnote") && ($("#lvnote").textContent = e.message); } };
+    o.addEventListener("click", async (e) => {
+      const w = e.target.closest("[data-w]"); if (w) { alive = false; clearInterval(timer); closeOverlay(); return HUB.joinRoom(w.dataset.w); }
+      const c = e.target.closest("[data-c]"); if (c) { const p = data.online[+c.dataset.c]; if (!p.uid) { return HUB.toast("Open their profile from a room to challenge them"); } return pickGame(p); }
+      const k = e.target.closest("[data-coin]"); if (k) { const amt = prompt("Give how many coins?", "100"); if (amt) { try { await HUB.api("/api/owner/user", { method: "POST", body: { uid: +k.dataset.coin, action: "coins", amount: parseInt(amt, 10) } }); HUB.toast("Coins sent"); } catch (err) { HUB.toast(err.message); } } }
+    });
+    load(); timer = setInterval(() => { if (!$("#lvbody")) { clearInterval(timer); alive = false; } else load(); }, 8000);
+  };
+
   HUB.openArcade = function () {
     const ord = [...ARCADE].sort((a, b) => (NEWK.has(b.k) ? 1 : 0) - (NEWK.has(a.k) ? 1 : 0));
     const o = overlay("🕹 Arcade", `<p class="xnote">${ARCADE.length} solo games that pay coins (daily cap applies). Anti-cheat runs on the server. In a group your scores also count on the group board.</p>
