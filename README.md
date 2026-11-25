@@ -180,3 +180,20 @@ For a quick look in a browser without Telegram, set `DEV_MODE=1` and open `https
 - Home screen has a highlighted Arcade hero strip; the Arcade menu is a gradient tile grid with NEW badges.
 - Computer players now use Indian names (about half girls) with cartoon DPs (`webapp/avatars`, regenerate with `tools/make_avatars.py`).
 - Owner panel/broadcast: shows reachable vs unreachable users (broadcast can only DM people who pressed Start). `/resetdm` re-marks everyone reachable. Only genuine "chat not found" errors flag a user as unreachable now.
+
+## v4.2
+- Welcome cards: when someone joins a group the bot posts a generated image (profile photo, full name, @username, Telegram id, member number) - `app/welcome.py`; admins toggle with `/welcome on|off`.
+- "Live now" screen (home + Owner panel): who is online, matches you can watch (spectate), and one-tap challenge with a DM invite (`/api/live`, `/api/challenge`).
+
+
+## v4.4 – Cricket & Football (2-player)
+- **Cricket**: draft 5 world stars, ball-by-ball secret duels (delivery+line vs shot+side), field settings, powerplay, TV scoreboard + stadium animation, scorecard.
+- **Football**: draft 1 GK + 5 outfield stars, two halves of tactical attacks (move + who does it vs stance + who to mark), fouls/cards/corners/counters, half-time sub, penalty shootout, animated pitch, goal celebration, spectator view.
+- Player names are plain-text labels with approximate own ratings (no photos/logos).
+- Still to do: Scribble group-photo updates, upgrades to Tank/Car Racing/Dominoes/Bluff/Coin/Dice duel.
+
+- **DM welcome (v4.5)**: /start in private chat sends a personal gradient card (own photo, first name, full name/@username, daily quote, coins/games chips); falls back to the plain banner on any error.
+
+- **Safety (v4.6)**: `app/safety.py` filters explicit/drug names, usernames, group titles (word list with leetspeak) and skin-dominated profile photos from welcome cards, DM card and stored display names. Best-effort: no ML image model is bundled.
+
+- v4.7: welcome cards (group + DM) no longer use profile photos at all; they show a gradient initial avatar. Name/username/title filter stays.
